@@ -131,12 +131,12 @@ jobs:
         id: build
         run: |
           ./build_libromfs_generator.sh
-          cd android-project && ./gradlew assembleDebug
+          cd android-project && ./gradlew assembleRelease
       - name: Upload dist
         uses: actions/upload-artifact@v4
         with:
           name: borealis-android
-          path: android-project/app/build/outputs/apk/debug/*.apk
+          path: android-project/app/build/outputs/apk/release/*.apk
 
   macos:
     runs-on: macos-14
