@@ -6,18 +6,13 @@ project(BOREALIS_DEMO)
 # include(AndroidNdkModules)
 # android_ndk_import_module_cpufeatures()
 
-
-# SDL sources are in a subfolder named "SDL"
-add_subdirectory(SDL)
-
-# Compilation of companion libraries
-#add_subdirectory(SDL_image)
-#add_subdirectory(SDL_mixer)
-#add_subdirectory(SDL_ttf)
-
-# Your game and its CMakeLists.txt are in a subfolder named "src"
-#add_subdirectory(src)
-
+include(FetchContent)
+FetchContent_Declare(SDL
+    URL https://github.com/libsdl-org/SDL/archive/release-2.30.6.tar.gz
+    SOURCE_DIR ${CMAKE_SOURCE_DIR}/SDL2
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(SDL)
 
 SET(PLATFORM_ANDROID ON CACHE BOOL "")
 SET(LIBROMFS_PREBUILT_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/borealis/libromfs-generator" CACHE STRING "")

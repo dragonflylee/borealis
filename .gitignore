@@ -11,4 +11,5 @@ builddir
 .DS_Store
 *.suprx
 libromfs-generator
+/android-project/app/jni/SDL2
 !.github/
