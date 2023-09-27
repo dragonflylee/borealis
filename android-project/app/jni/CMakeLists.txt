@@ -6,17 +6,6 @@ project(BOREALIS_DEMO)
 # include(AndroidNdkModules)
 # android_ndk_import_module_cpufeatures()
 
-set(BUILD_SHARED_LIBS ON CACHE BOOL "")
-
-# SDL sources are in a subfolder named "SDL"
-add_subdirectory(SDL)
-
-# Compilation of companion libraries
-#add_subdirectory(SDL_image)
-#add_subdirectory(SDL_mixer)
-#add_subdirectory(SDL_ttf)
-
-
 SET(PLATFORM_ANDROID ON CACHE BOOL "")
 SET(LIBROMFS_PREBUILT_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/borealis/libromfs-generator" CACHE STRING "")
 
