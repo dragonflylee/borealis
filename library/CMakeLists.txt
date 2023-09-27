@@ -73,6 +73,7 @@ if (UNIX AND NOT APPLE AND NOT ANDROID)
 endif ()
 
 if (PLATFORM_DESKTOP)
+    include(FetchContent)
     if (USE_SDL2)
         if (USE_SYSTEM_SDL2)
             find_package(SDL2 REQUIRED)
@@ -80,9 +81,13 @@ if (PLATFORM_DESKTOP)
             list(APPEND BRLS_PLATFORM_LIBS ${SDL2_LIBRARIES})
             list(APPEND BOREALIS_INCLUDE ${SDL2_INCLUDE_DIRS})
         else ()
+            FetchContent_Declare(SDL2
+                URL https://github.com/libsdl-org/SDL/archive/release-2.30.6.tar.gz
+                DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            )
             set(BUILD_SHARED_LIBS OFF)
             set(SDL_TEST_ENABLED_BY_DEFAULT OFF)
-            add_subdirectory(${BOREALIS_PATH}/lib/extern/SDL EXCLUDE_FROM_ALL)
+            FetchContent_MakeAvailable(SDL2)
             list(APPEND BRLS_PLATFORM_LIBS SDL2::SDL2-static SDL2::SDL2main)
         endif ()
         list(APPEND BRLS_PLATFORM_OPTION -D__SDL2__)
@@ -91,8 +96,15 @@ if (PLATFORM_DESKTOP)
         if (USE_SYSTEM_GLFW)
             find_package(glfw3 REQUIRED)
         else ()
+            FetchContent_Declare(glfw
+                URL https://github.com/dragonflylee/glfw/archive/switchfin.tar.gz
+                DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+            )
+            set(GLFW_BUILD_EXAMPLES OFF)
+            set(GLFW_BUILD_TESTS OFF)
             set(GLFW_BUILD_DOCS OFF)
-            add_subdirectory(${BOREALIS_PATH}/lib/extern/glfw EXCLUDE_FROM_ALL)
+            set(GLFW_INSTALL OFF)
+            FetchContent_MakeAvailable(glfw)
         endif ()
         list(APPEND BRLS_PLATFORM_LIBS glfw)
         list(APPEND BRLS_PLATFORM_OPTION -D__GLFW__)
@@ -119,9 +131,14 @@ elseif (PLATFORM_PSV)
     if (USE_SYSTEM_SDL2)
         find_package(SDL2 REQUIRED)
     else ()
+        include(FetchContent)
+        FetchContent_Declare(SDL2
+            URL https://github.com/libsdl-org/SDL/archive/release-2.30.6.tar.gz
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        )
         set(BUILD_SHARED_LIBS OFF)
         set(VIDEO_VITA_PVR ON CACHE BOOL "")
-        add_subdirectory(${BOREALIS_PATH}/lib/extern/SDL EXCLUDE_FROM_ALL)
+        FetchContent_MakeAvailable(SDL2)
     endif ()
     list(APPEND BOREALIS_SOURCE
             ${BOREALIS_PATH}/lib/platforms/psv
@@ -166,8 +183,13 @@ elseif(PLATFORM_ANDROID)
     list(APPEND BRLS_PLATFORM_LIBS SDL2 SDL2main)
     list(APPEND BRLS_PLATFORM_OPTION -D__SDL2__ -DANDROID)
 elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    include(FetchContent)
+    FetchContent_Declare(SDL2
+        URL https://github.com/libsdl-org/SDL/archive/release-2.30.6.tar.gz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
     set(BUILD_SHARED_LIBS OFF)
-    add_subdirectory(${BOREALIS_PATH}/lib/extern/SDL)
+    FetchContent_MakeAvailable(SDL2)
     find_library(SDL2 NAMES SDL2-static SDL2main)
     list(APPEND BOREALIS_SOURCE
             ${BOREALIS_PATH}/lib/platforms/sdl
