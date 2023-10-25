@@ -184,6 +184,7 @@ class Application
     static void crash(std::string text);
 
     static void quit();
+    static void clear();
 
     /**
      * Blocks any and all user inputs
@@ -370,7 +371,6 @@ class Application
     static void navigate(FocusDirection direction, bool repeating);
 
     static void frame();
-    static void clear();
     static void exit();
 
     /**
