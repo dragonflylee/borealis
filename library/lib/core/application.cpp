@@ -1024,6 +1024,7 @@ void Application::clear()
         delete activity;
     }
 
+    Application::focusStack.clear();
     Application::activitiesStack.clear();
 }
 
