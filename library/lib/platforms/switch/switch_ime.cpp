@@ -107,6 +107,27 @@ bool SwitchImeManager::openForText(std::function<void(std::string)> f, std::stri
     return false;
 }
 
+bool SwitchImeManager::openForPassword(std::function<void(std::string)> f, std::string headerText,
+    std::string subText, int maxStringLength, std::string initialText)
+{
+    SwkbdConfig config = createSwkbdBaseConfig(headerText, subText, maxStringLength, initialText);
+    swkbdConfigSetPasswordFlag(&config, 1);
+
+    char buffer[0x100];
+
+    if (R_SUCCEEDED(swkbdShow(&config, buffer, 0x100)) && strcmp(buffer, "") != 0)
+    {
+        f(buffer);
+
+        swkbdClose(&config);
+        return true;
+    }
+
+    swkbdClose(&config);
+
+    return false;
+}
+
 bool SwitchImeManager::openForNumber(std::function<void(long)> f, std::string headerText,
     std::string subText, int maxStringLength, std::string initialText,
     std::string leftButton, std::string rightButton,

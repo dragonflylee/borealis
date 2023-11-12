@@ -87,6 +87,12 @@ SettingsTab::SettingsTab()
         },
         "Placeholder", "Hint");
 
+    inputPassword->init(
+        "Input password", "", [](std::string text) {
+
+        },
+        "Please input password", "Hint");
+
     inputNumeric->init(
         "Input number", 2448, [](int number) {
 

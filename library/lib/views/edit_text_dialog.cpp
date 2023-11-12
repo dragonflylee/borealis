@@ -2,6 +2,9 @@
 #include <borealis/core/i18n.hpp>
 #include <borealis/core/touch/tap_gesture.hpp>
 #include <borealis/core/application.hpp>
+#include <borealis/core/i18n.hpp>
+#include <borealis/views/edit_text_dialog.hpp>
+#include <libretro-common/encodings/utf.h>
 
 #ifdef __PSV__
 #define EDIT_TEXT_DIALOG_POP_ANIMATION TransitionAnimation::NONE
@@ -240,6 +243,14 @@ namespace brls
             label->setText(hint);
             label->setCursor((int)CursorPosition::START);
         }
+        else if (this->passwordStyle)
+        {
+            std::string filled;
+            size_t len = utf8len(this->content.c_str());
+            for (size_t i = 0; i < len; i++) filled += "●";
+            label->setTextColor(Application::getTheme().getColor("brls/text"));
+            label->setText(filled);
+        }
         else
         {
             label->setTextColor(Application::getTheme().getColor("brls/text"));
@@ -250,4 +261,23 @@ namespace brls
     void EditTextDialog::setCursor(int cursor) {
         label->setCursor(cursor);
     }
+
+    void EditTextDialog::setPasswordStyle(bool value)
+    {
+        this->passwordStyle = value;
+        if (value)
+        {
+            this->passwordEvent = this->registerAction(
+                "hints/password"_i18n, BUTTON_GUIDE, [this](...)
+                { 
+                    this->passwordStyle = !this->passwordStyle;
+                    this->updateUI();
+                    return true; });
+        }
+        else if (this->passwordEvent)
+        {
+            this->unregisterAction(this->passwordEvent);
+        }
+    }
+
 }
