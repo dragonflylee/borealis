@@ -190,7 +190,7 @@ void Threading::std_task_loop() {
 }
 void* Threading::task_loop(void* a)
 {
-    while (task_loop_active)
+    while (task_loop_active || m_async_tasks.size())
     {
         std::vector<std::function<void()>> m_tasks_copy;
         {
