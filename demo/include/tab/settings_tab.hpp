@@ -27,6 +27,7 @@ class SettingsTab : public brls::Box
     BRLS_BIND(brls::BooleanCell, boolean, "boolean");
     BRLS_BIND(brls::SelectorCell, selector, "selector");
     BRLS_BIND(brls::InputCell, input, "input");
+    BRLS_BIND(brls::InputCell, inputPassword, "inputPassword");
     BRLS_BIND(brls::InputNumericCell, inputNumeric, "inputNumeric");
     BRLS_BIND(brls::DetailCell, ipAddress, "ipAddress");
     BRLS_BIND(brls::DetailCell, dnsServer, "dnsServer");

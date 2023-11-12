@@ -154,7 +154,7 @@ GLFWImeManager::GLFWImeManager(GLFWwindow* window)
 }
 
 void GLFWImeManager::openInputDialog(std::function<void(std::string)> cb, std::string headerText,
-    std::string subText, size_t maxStringLength, std::string initialText)
+    std::string subText, size_t maxStringLength, std::string initialText, bool isPassword)
 {
 #ifdef __linux__
     if (isSteamDeck())
@@ -164,10 +164,12 @@ void GLFWImeManager::openInputDialog(std::function<void(std::string)> cb, std::s
     }
 #endif
     preeditTextBuffer.clear();
-    glfwSetInputMode(window, GLFW_IME, GLFW_TRUE);
+    glfwSetInputMode(window, GLFW_IME, isPassword ? GLFW_FALSE : GLFW_TRUE);
     showIME     = true;
     textBuffer  = std::wstring_convert<std::codecvt_utf8<wchar_t>>().from_bytes(initialText);
     auto dialog = new EditTextDialog();
+    dialog->setPasswordStyle(isPassword);
+    dialog->setHintText(subText);
     dialog->setText(initialText);
     cursor = -1;
     dialog->setCursor(cursor);
@@ -209,7 +211,7 @@ void GLFWImeManager::openInputDialog(std::function<void(std::string)> cb, std::s
                 lastText = textBuffer;
                 if(textBuffer.empty()){
                     dialog->setText("");
-                } else{
+                } else {
                     dialog->setText(getInputText());
                     dialog->setCursor(cursor);
                 }
@@ -299,6 +301,15 @@ bool GLFWImeManager::openForText(std::function<void(std::string)> f, std::string
     this->openInputDialog([f](const std::string& text)
         { f(text); },
         headerText, subText, maxStringLength, initialText);
+    return true;
+}
+
+bool GLFWImeManager::openForPassword(std::function<void(std::string)> f, std::string headerText,
+        std::string subText, int maxStringLength, std::string initialText)
+{
+    this->openInputDialog([f](const std::string& text)
+        {if(!text.empty()) f(text); },
+        headerText, subText, maxStringLength, initialText, true);
     return true;
 }
 

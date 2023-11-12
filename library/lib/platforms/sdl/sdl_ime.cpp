@@ -85,8 +85,10 @@ namespace brls
         std::string headerText,
         std::string subText,
         size_t maxStringLength,
-        std::string initialText) {
+        std::string initialText,
+        bool isPassword) {
         EditTextDialog* dialog = new EditTextDialog();
+        dialog->setPasswordStyle(isPassword);
         this->inputBuffer = initialText;
 #ifdef __PSV__
         vita_ime_init_text = reinterpret_cast<uint8_t *>(const_cast<char *>(this->inputBuffer.c_str()));
@@ -250,6 +252,15 @@ namespace brls
         this->openInputDialog([f](const std::string& text)
             { f(text); },
             headerText, subText, maxStringLength, initialText);
+        return true;
+    }
+
+    bool SDLImeManager::openForPassword(std::function<void(std::string)> f, std::string headerText,
+        std::string subText, int maxStringLength, std::string initialText)
+    {
+        this->openInputDialog([f](const std::string& text)
+            {if(!text.empty()) f(text); },
+            headerText, subText, maxStringLength, initialText, true);
         return true;
     }
 

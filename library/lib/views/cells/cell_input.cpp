@@ -15,8 +15,8 @@
 */
 
 #include "borealis/views/cells/cell_input.hpp"
-
 #include "borealis/views/dropdown.hpp"
+#include <libretro-common/encodings/utf.h>
 
 namespace brls
 {
@@ -25,14 +25,26 @@ InputCell::InputCell()
 {
     detail->setTextColor(Application::getTheme()["brls/list/listItem_value_color"]);
 
-    this->registerClickAction([this](View* view)
+    BRLS_REGISTER_ENUM_XML_ATTRIBUTE(
+        "type", InputCellType, this->setType,
         {
-            Application::getImeManager()->openForText([&](std::string text) {
-            this->setValue(text);
-        },
-            this->title->getFullText(), this->hint, this->maxInputLength, this->value, this->kbdDisableBitmask);
+            { "text", InputCellType::TEXT },
+            { "url", InputCellType::URL },
+            { "password", InputCellType::PASSWORD },
+        });
 
-        return true; });
+    this->registerClickAction([this](View* view) {
+        switch (this->type) {
+            case InputCellType::PASSWORD: {
+                return Application::getImeManager()->openForPassword([&](std::string text) { this->setValue(text); },
+                    this->title->getFullText(), this->hint, this->maxInputLength, this->value);
+            }
+            default: {
+                return Application::getImeManager()->openForText([&](std::string text) { this->setValue(text); },
+                    this->title->getFullText(), this->hint, this->maxInputLength, this->value, this->kbdDisableBitmask);
+            }
+        }
+    });
 }
 
 void InputCell::init(std::string title, std::string value, Event<std::string>::Callback callback, std::string placeholder, std::string hint, int maxInputLength, int kbdDisableBitmask)
@@ -60,6 +72,11 @@ void InputCell::setPlaceholder(std::string placeholder)
     updateUI();
 }
 
+void InputCell::setType(InputCellType type)
+{
+    this->type = type;
+}
+
 void InputCell::updateUI()
 {
     Theme theme = Application::getTheme();
@@ -67,6 +84,14 @@ void InputCell::updateUI()
     {
         this->detail->setText(placeholder);
         this->detail->setTextColor(theme["brls/text_disabled"]);
+    }
+    else if (this->type == InputCellType::PASSWORD)
+    {
+        std::string filled;
+        size_t len = utf8len(this->value.c_str());
+        for (size_t i = 0; i < len; i++) filled += "●";
+        this->detail->setText(filled);
+        this->detail->setTextColor(theme["brls/list/listItem_value_color"]);
     }
     else
     {
