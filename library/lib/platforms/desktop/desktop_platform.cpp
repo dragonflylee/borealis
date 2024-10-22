@@ -124,6 +124,7 @@ int win32_wlan_quality()
                     WlanFreeMemory(attrs);
                     break;
                 }
+                quality = 100;
             }
             WlanFreeMemory(ppinfo);
         }
