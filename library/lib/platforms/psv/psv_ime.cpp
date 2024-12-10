@@ -211,6 +211,21 @@ bool PsvImeManager::openForText(std::function<void(std::string)> f, std::string 
     return ret;
 }
 
+bool PsvImeManager::openForPassword(std::function<void(std::string)> f, std::string headerText,
+        std::string subText, int maxStringLength, std::string initialText)
+{
+    bool ret;
+    auto ime = new PsvImeView();
+    ime->setTextFieldType(SCE_IME_TYPE_DEFAULT);
+    ime->setCallback(f);
+    ime->setHeaderText(headerText);
+    ime->setInitialText(initialText);
+    ime->setMaxStringLength(maxStringLength);
+    ret = ime->openImeDialog();
+    Application::pushActivity(new Activity(ime));
+    return ret;
+}
+
 bool PsvImeManager::openForNumber(std::function<void(long)> f, std::string headerText,
     std::string subText, int maxStringLength, std::string initialText,
     std::string leftButton, std::string rightButton,
