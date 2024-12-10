@@ -16,6 +16,7 @@ class EditTextDialog : public Box
     void setHintText(const std::string& value);
     void setCountText(const std::string& value);
     void setCursor(int cursor);
+    void setPasswordStyle(bool value);
     bool isTranslucent() override;
     void onLayout() override;
     Event<Point>* getLayoutEvent();
@@ -30,6 +31,8 @@ class EditTextDialog : public Box
     Event<Point> layoutEvent;
     Event<> backspaceEvent, cancelEvent, summitEvent;
     Event<std::string> clipboardEvent;
+    ActionIdentifier passwordEvent;
+    bool passwordStyle = false;
     bool init = false;
 
     BRLS_BIND(brls::Label, header, "brls/dialog/header");

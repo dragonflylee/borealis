@@ -186,6 +186,14 @@ bool Ps4ImeManager::openForText(std::function<void(std::string)> f, std::string 
     return true;
 }
 
+bool Ps4ImeManager::openForPassword(std::function<void(std::string)> f, std::string headerText,
+        std::string subText, int maxStringLength, std::string initialText)
+{
+    InitializeImeDialog(headerText, initialText, subText, ORBIS_TYPE_BASIC_LATIN, maxStringLength);
+    ShowImeDialog(f);
+    return true;
+}
+
 bool Ps4ImeManager::openForNumber(std::function<void(long)> f, std::string headerText,
     std::string subText, int maxStringLength, std::string initialText,
     std::string leftButton, std::string rightButton,
