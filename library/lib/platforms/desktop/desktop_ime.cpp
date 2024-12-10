@@ -41,6 +41,14 @@ bool DesktopImeManager::openForText(std::function<void(std::string)> f, std::str
     return true;
 }
 
+bool DesktopImeManager::openForPassword(std::function<void(std::string)> f, std::string headerText,
+        std::string subText, int maxStringLength, std::string initialText)
+{
+    std::string line = terminalInput(headerText);
+    f(line);
+    return true;
+}
+
 bool DesktopImeManager::openForNumber(std::function<void(long)> f, std::string headerText,
     std::string subText, int maxStringLength, std::string initialText,
     std::string leftButton, std::string rightButton,

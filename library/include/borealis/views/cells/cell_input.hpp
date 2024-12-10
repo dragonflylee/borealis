@@ -26,6 +26,13 @@
 namespace brls
 {
 
+enum class InputCellType
+{
+    TEXT,
+    URL,
+    PASSWORD
+};
+
 class InputCell : public DetailCell
 {
   public:
@@ -50,6 +57,8 @@ class InputCell : public DetailCell
         this->hint = hint;
     }
 
+    void setType(InputCellType type);
+
     std::string getHint()
     {
         return hint;
@@ -66,8 +75,9 @@ class InputCell : public DetailCell
     std::string value;
     std::string hint;
     std::string placeholder;
-    int maxInputLength;
-    int kbdDisableBitmask;
+    InputCellType type = InputCellType::TEXT;
+    int maxInputLength = 32;
+    int kbdDisableBitmask = 0;
 
     Event<std::string> event;
     void updateUI();

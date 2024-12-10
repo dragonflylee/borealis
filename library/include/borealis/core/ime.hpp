@@ -47,6 +47,10 @@ class ImeManager
         int kbdDisableBitmask = KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_NONE)
         = 0;
 
+    virtual bool openForPassword(std::function<void(std::string)> f, std::string headerText,
+        std::string subText = "", int maxStringLength = 32, std::string initialText = "")
+        = 0;
+
     virtual bool openForNumber(std::function<void(long)> f, std::string headerText = "",
         std::string subText = "", int maxStringLength = 18, std::string initialText = "",
         std::string leftButton = "", std::string rightButton = "",
