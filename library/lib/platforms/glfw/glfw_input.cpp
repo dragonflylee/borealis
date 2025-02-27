@@ -193,6 +193,12 @@ void GLFWInputManager::cursorCallback(GLFWwindow* window, double x, double y)
     }
 }
 
+void GLFWInputManager::cursorEnterCallback(GLFWwindow* window, int entered)
+{
+    auto* self = (GLFWInputManager*)Application::getPlatform()->getInputManager();
+    self->getMouseCusorEntered()->fire(entered);
+}
+
 GLFWInputManager::GLFWInputManager(GLFWwindow* window)
     : window(window)
 {
@@ -211,6 +217,7 @@ GLFWInputManager::GLFWInputManager(GLFWwindow* window)
     glfwSetJoystickCallback(glfwJoystickCallback);
     glfwSetScrollCallback(window, scrollCallback);
     glfwSetCursorPosCallback(window, cursorCallback);
+    glfwSetCursorEnterCallback(window, cursorEnterCallback);
     glfwSetKeyCallback(window, keyboardCallback);
     if (glfwTouchInputSupported())
     {

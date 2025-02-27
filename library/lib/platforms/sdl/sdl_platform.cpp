@@ -193,6 +193,17 @@ bool SDLPlatform::processEvent(SDL_Event* event)
     {
         return false;
     }
+    else if (event->type == SDL_WINDOWEVENT)
+    {
+        auto* manager = this->inputManager;
+        if (event->window.event == SDL_WINDOWEVENT_LEAVE) {
+            if (manager)
+                manager->getMouseCusorEntered()->fire(false);
+        } else if (event->window.event == SDL_WINDOWEVENT_ENTER) {
+            if (manager)
+                manager->getMouseCusorEntered()->fire(true);
+        }
+    }
     else if (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP)
     {
         auto* manager = this->inputManager;

@@ -15,3 +15,17 @@
 */
 
 #include "activity/main_activity.hpp"
+
+MainActivity::MainActivity()
+{
+    auto* input = brls::Application::getPlatform()->getInputManager();
+    this->enterSubscription = input->getMouseCusorEntered()->subscribe([](bool enterd) {
+        brls::Logger::debug("Mouse Cusor {}", enterd ? "enterd" : "leave");
+    });
+}
+
+MainActivity::~MainActivity()
+{
+    auto* input = brls::Application::getPlatform()->getInputManager();
+    input->getMouseCusorEntered()->unsubscribe(this->enterSubscription);
+}

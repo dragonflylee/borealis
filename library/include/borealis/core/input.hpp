@@ -344,6 +344,11 @@ class InputManager
 
     virtual void setPointerLock(bool lock) {};
 
+    inline Event<bool>* getMouseCusorEntered()
+    {
+        return &mouseCusorEntered;
+    }
+
     inline Event<Point>* getMouseCusorOffsetChanged()
     {
         return &mouseCusorOffsetChanged;
@@ -376,6 +381,7 @@ class InputManager
     static ControllerButton mapControllerState(ControllerButton button);
 
   private:
+    Event<bool> mouseCusorEntered;
     Event<Point> mouseCusorOffsetChanged;
     Event<Point> mouseScrollOffsetChanged;
     Event<KeyState> keyboardKeyStateChanged;

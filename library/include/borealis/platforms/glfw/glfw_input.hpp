@@ -54,6 +54,7 @@ class GLFWInputManager : public InputManager
     Point pointerOffsetBuffer;
     static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset);
     static void cursorCallback(GLFWwindow* window, double xoffset, double yoffset);
+    static void cursorEnterCallback(GLFWwindow* window, int entered);
     static void keyboardCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
     GLFWwindow* window;
     bool pointerLocked = false;
