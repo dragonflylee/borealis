@@ -226,7 +226,7 @@ SDLVideoContext::SDLVideoContext(std::string windowTitle, uint32_t windowWidth, 
     SDL_GL_SetAttribute(SDL_GL_ACCELERATED_VISUAL, 1);
 #endif
 #if defined(USE_EGL)
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_SetHint(SDL_HINT_VIDEO_FORCE_EGL, "1");
 #endif
     windowFlags |= SDL_WINDOW_OPENGL;
 #endif
