@@ -669,6 +669,8 @@ void SDLInputManager::updateKeyboardState(SDL_KeyboardEvent event)
     state.mods |= event.keysym.mod & KMOD_ALT ? BRLS_KBD_MODIFIER_ALT : 0;
     state.mods |= event.keysym.mod & KMOD_GUI ? BRLS_KBD_MODIFIER_META : 0;
 
+    Logger::debug("Scan: {} / Code: {} / Action: {}", (int)event.keysym.scancode, (int)state.key, event.type);
+
     self->getKeyboardKeyStateChanged()->fire(state);
     Application::setActiveEvent(true);
 }
