@@ -20,6 +20,11 @@ limitations under the License.
 #include <orbis/Sysmodule.h>
 #include <orbis/UserService.h>
 #include <orbis/SystemService.h>
+#include <netinet/in.h>
+
+// DNS globals required by patched musl
+in_addr_t primary_dns = 0;
+in_addr_t secondary_dns = 0;
 
 #include <borealis/core/application.hpp>
 #include <borealis/core/logger.hpp>
