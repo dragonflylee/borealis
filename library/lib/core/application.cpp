@@ -649,8 +649,8 @@ bool Application::getAutomaticDeactivation()
 
 bool Application::hasActiveEvent()
 {
-#ifdef __SWITCH__
-    // Switch does not support waiting for events
+#if defined(__SWITCH__) || defined(__PS4__)
+    // Switch and PS4 do not support waiting for events - always render
     return true;
 #else
     if (!Application::deactivatedBehavior || activeEvent || Application::frameStartTime - lastActiveTime < Application::deactivatedTime)
