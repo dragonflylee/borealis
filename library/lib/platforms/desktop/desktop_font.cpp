@@ -27,29 +27,6 @@
 namespace brls
 {
 
-const static std::vector<std::string> fontExts = {
-    ".ttc",
-    ".ttf",
-    ".otf",
-};
-
-bool DesktopFontLoader::loadFontsExist(NVGcontext* vg, std::vector<std::string> fontPaths, std::string fontName, std::string fallbackFont) {
-    for (auto &fontPath: fontPaths) {
-        for (auto &fontExt: fontExts) {
-            std::string fullPath = fontPath + fontExt;
-            if (access(fullPath.c_str(), F_OK) != -1) {
-                this->loadFontFromFile(fontName, fullPath);
-                if (!fallbackFont.empty()) {
-                    nvgAddFallbackFontId(vg, Application::getFont(fallbackFont), Application::getFont(fontName));
-                }
-                brls::Logger::info("Using {} font: {}", fontName, fullPath);
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 bool DesktopFontLoader::loadFont(const std::string& name, const std::string& path) {
 #ifdef USE_LIBROMFS
     if (path.empty()) return false;
@@ -87,54 +64,24 @@ void DesktopFontLoader::loadFonts()
             nvgAddFallbackFontId(vg, Application::getFont(FONT_REGULAR), Application::getFont("default"));
         }
     } else {
-        brls::Logger::warning("Cannot find custom font, (Searched at: {})", USER_FONT_PATH);
-        brls::Logger::info("Trying to use internal font: {}", INTER_FONT_PATH);
+        Logger::warning("Cannot find custom font, (Searched at: {})", USER_FONT_PATH);
         if (!loadFont(FONT_REGULAR, INTER_FONT_PATH))
         {
             Logger::warning("Failed to load internal font, text may not be displayed");
         }
+        else
+        {
+            Logger::info("Trying to use internal font: {}", INTER_FONT_PATH);
+        }
     }
 
-    // Using system font as fallback
-#if defined(__APPLE__) && !defined(IOS)
-    std::vector<std::string> koreanFonts = {
-        "/System/Library/Fonts/AppleSDGothicNeo",
-    };
-    std::vector<std::string> simplifiedChineseFonts;
-    // {
-    //     "/System/Library/Fonts/STHeiti Light", // 黑体
-    //     "/System/Library/Fonts/Supplemental/Arial Unicode", // Arial Unicode
-    //     "/System/Library/Fonts/Supplemental/Songti", // 宋体
-    // };
-#elif defined(_WIN32)
-    std::string prefix = "C:\\Windows\\Fonts\\";
-    char* winDir = getenv("systemroot");
-    if (winDir) {
-        prefix = std::string{winDir} + "\\Fonts\\";
+    if (loadFont(FONT_CHINESE_SIMPLIFIED, BRLS_ASSET("font/chinese_fallback.ttf")))
+    {
+        nvgAddFallbackFontId(vg, Application::getFont(FONT_REGULAR), Application::getFont(FONT_CHINESE_SIMPLIFIED));
     }
-    std::vector<std::string> koreanFonts = {
-        prefix+"malgun",
-    };
-    std::vector<std::string> simplifiedChineseFonts = {
-        prefix+"msyh",
-    };
-#elif defined(ANDROID)
-    std::vector<std::string> koreanFonts;
-    std::vector<std::string> simplifiedChineseFonts = {
-        "/system/fonts/NotoSansCJK-Regular",
-        "/system/fonts/DroidSansFallback",
-        "/system/fonts/NotoSansSC-Regular",
-        "/system/fonts/DroidSansChinese",
-    };
-#else
-    std::vector<std::string> koreanFonts;
-    std::vector<std::string> simplifiedChineseFonts;
-#endif
-    if (!simplifiedChineseFonts.empty()) {
-        loadFontsExist(vg, simplifiedChineseFonts, FONT_CHINESE_SIMPLIFIED, FONT_REGULAR);
-    }
-    if (!koreanFonts.empty()) {
-        loadFontsExist(vg, koreanFonts, FONT_KOREAN_REGULAR, FONT_REGULAR);
+    if (loadFont(FONT_KOREAN_REGULAR, BRLS_ASSET("font/korean_fallback.ttf")))
+    {
+        nvgAddFallbackFontId(vg, Application::getFont(FONT_REGULAR), Application::getFont(FONT_KOREAN_REGULAR));
     }
 
     // Load Emoji
