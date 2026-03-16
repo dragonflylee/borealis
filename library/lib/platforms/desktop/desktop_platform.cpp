@@ -191,6 +191,7 @@ enum INHIBIT_TYPE
     FDO_PM, /**< KDE and GNOME <= 2.26 and Xfce */
     MATE, /**< >= 1.0 */
     GNOME, /**< GNOME 2.26..3.4 */
+    PORTAL,
     NONE,
 };
 
@@ -199,6 +200,7 @@ static const char dbus_service[][40] = {
     "org.freedesktop.PowerManagement",
     "org.mate.SessionManager",
     "org.gnome.SessionManager",
+    "org.freedesktop.portal.Desktop",
 };
 
 static const char dbus_interface[][40] = {
@@ -206,6 +208,7 @@ static const char dbus_interface[][40] = {
     "org.freedesktop.PowerManagement.Inhibit",
     "org.mate.SessionManager",
     "org.gnome.SessionManager",
+    "org.freedesktop.portal.Inhibit",
 };
 
 static const char dbus_path[][41] = {
@@ -213,13 +216,15 @@ static const char dbus_path[][41] = {
     "/org/freedesktop/PowerManagement/Inhibit",
     "/org/mate/SessionManager",
     "/org/gnome/SessionManager",
+    "/org/freedesktop/portal/desktop",
 };
 
 static const char dbus_method_uninhibit[][10] = {
     "UnInhibit",
     "UnInhibit",
+    "UnInhibit",
     "Uninhibit",
-    "Uninhibit",
+    "Close",
 };
 
 static const char dbus_method_inhibit[] = "Inhibit";
@@ -265,11 +270,11 @@ void closeSessionBus(DBusConnection* bus)
     dbus_connection_unref(bus);
 }
 
-uint32_t dbusInhibit(DBusConnection* connection, const std::string& app, const std::string& reason)
+void* dbusInhibit(DBusConnection* connection, const std::string& app, const std::string& reason)
 {
     if (systemType == NONE) {
         Logger::error("Idle inhibitor not available");
-        return 0;
+        return nullptr;
     }
 
     DBusMessage* msg = dbus_message_new_method_call(dbus_service[systemType],
@@ -282,7 +287,7 @@ uint32_t dbusInhibit(DBusConnection* connection, const std::string& app, const s
             dbus_path[systemType],
             dbus_interface[systemType],
             dbus_method_inhibit);
-        return 0;
+        return nullptr;
     }
 
     const char* app_ptr    = app.c_str();
@@ -300,6 +305,20 @@ uint32_t dbusInhibit(DBusConnection* connection, const std::string& app, const s
                 DBUS_TYPE_STRING, &reason_ptr,
                 DBUS_TYPE_UINT32, &gflags,
                 DBUS_TYPE_INVALID);
+            break;
+        }
+        case PORTAL:
+        {
+            dbus_uint32_t gflags = 4;
+            dbus_message_append_args(msg,
+                DBUS_TYPE_STRING, &app_ptr,
+                DBUS_TYPE_UINT32, &gflags,
+                DBUS_TYPE_INVALID);
+            
+            DBusMessageIter iter, iterDict;
+		    dbus_message_iter_init_append(msg, &iter);
+            dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &iterDict);
+            dbus_message_iter_close_container(&iter, &iterDict);
             break;
         }
         default:
@@ -322,9 +341,24 @@ uint32_t dbusInhibit(DBusConnection* connection, const std::string& app, const s
         return 0;
     }
 
-    uint32_t id               = 0;
-    dbus_bool_t dbus_args_res = dbus_message_get_args(dbus_reply, &dbus_error, DBUS_TYPE_UINT32, &id,
-        DBUS_TYPE_INVALID);
+    dbus_bool_t dbus_args_res = 0;
+    void *id = nullptr;
+
+    switch (systemType)
+    {
+        case PORTAL:
+        {
+            const char *reply = nullptr;
+            dbus_args_res = dbus_message_get_args(dbus_reply, &dbus_error, DBUS_TYPE_OBJECT_PATH, &reply, DBUS_TYPE_INVALID);
+            id = strdup(reply);
+            break;
+        }
+        default:
+            id = malloc(sizeof(uint32_t));
+            dbus_args_res = dbus_message_get_args(dbus_reply, &dbus_error, DBUS_TYPE_UINT32, id, DBUS_TYPE_INVALID);
+            break;
+    }
+    
     dbus_message_unref(dbus_reply);
     if (!dbus_args_res)
     {
@@ -335,7 +369,7 @@ uint32_t dbusInhibit(DBusConnection* connection, const std::string& app, const s
     return id;
 }
 
-void dbusUnInhibit(DBusConnection* connection, uint32_t cookie)
+void dbusUnInhibit(DBusConnection* connection, void* cookie)
 {
     if (systemType == NONE) {
         Logger::error("Idle inhibitor not available");
@@ -356,8 +390,42 @@ void dbusUnInhibit(DBusConnection* connection, uint32_t cookie)
     }
 
     dbus_message_append_args(msg,
-        DBUS_TYPE_UINT32, &cookie,
+        DBUS_TYPE_UINT32, cookie,
         DBUS_TYPE_INVALID);
+
+    DBusError dbus_error;
+    dbus_error_init(&dbus_error);
+    DBusMessage* dbus_reply = dbus_connection_send_with_reply_and_block(connection, msg, DBUS_TIMEOUT_USE_DEFAULT,
+        &dbus_error);
+    dbus_message_unref(msg);
+    if (!dbus_reply)
+    {
+        Logger::error("DBus connection failed: {}/{}", dbus_error.name, dbus_error.message);
+        dbus_error_free(&dbus_error);
+    }
+}
+
+void dbusRequestClose(DBusConnection* connection, const char* path)
+{
+    if (systemType == NONE) {
+        Logger::error("Idle inhibitor not available");
+        return;
+    }
+
+    DBusMessage* msg = dbus_message_new_method_call(dbus_service[PORTAL],
+        path,
+        "org.freedesktop.portal.Request",
+        "Close");
+    if (!msg)
+    {
+        Logger::error("DBus cannot create new method call: {};{};{};{}", dbus_service[systemType],
+            path,
+            "org.freedesktop.portal.Request",
+            "Close");
+        return;
+    }
+
+    dbus_message_append_args(msg, DBUS_TYPE_INVALID);
 
     DBusError dbus_error;
     dbus_error_init(&dbus_error);
@@ -646,8 +714,12 @@ void DesktopPlatform::disableScreenDimming(bool disable, const std::string& reas
     {
 #ifdef __SDL2__
 #elif defined(__linux__)
-        if (inhibitCookie != 0)
-            dbusUnInhibit(dbus_conn.get(), inhibitCookie);
+        if (inhibitCookie != nullptr) {
+            if (systemType != PORTAL)
+                dbusUnInhibit(dbus_conn.get(), inhibitCookie);
+            else
+                dbusRequestClose(dbus_conn.get(), (const char *)inhibitCookie);
+        }
 #elif __APPLE__
         IOPMAssertionRelease(assertionID);
 #elif _WIN32
