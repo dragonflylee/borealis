@@ -58,9 +58,10 @@ class SwitchVideoContext : public VideoContext
 
     dk::Image* getFramebuffer();
 
-    CDescriptorSet<4096U> *getImageDescriptor();
-
     int allocateImageIndex();
+    bool freeImageIndex(int index);
+    bool updateImageDescriptor(dk::CmdBuf cmdbuf, int index, dk::ImageDescriptor const& descriptor);
+    void invalidateImageDescriptors(dk::CmdBuf cmdbuf);
 
     void queueWaitFence(DkFence* fence);
 

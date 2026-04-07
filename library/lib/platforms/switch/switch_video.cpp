@@ -300,9 +300,19 @@ dk::Image* SwitchVideoContext::getFramebuffer()
     return &framebuffers[imageSlot];
 }
 
-CDescriptorSet<4096U> *SwitchVideoContext::getImageDescriptor() { return renderer->GetImageDescriptor(); }
-
 int SwitchVideoContext::allocateImageIndex() { return renderer->AllocateImageIndex(); }
+
+bool SwitchVideoContext::freeImageIndex(int index) { return renderer->FreeImageIndex(index); }
+
+bool SwitchVideoContext::updateImageDescriptor(dk::CmdBuf cmdbuf, int index, dk::ImageDescriptor const& descriptor)
+{
+    return renderer->UpdateImageDescriptor(cmdbuf, index, descriptor);
+}
+
+void SwitchVideoContext::invalidateImageDescriptors(dk::CmdBuf cmdbuf)
+{
+    renderer->InvalidateImageDescriptors(cmdbuf);
+}
 
 void SwitchVideoContext::queueWaitFence(DkFence* fence)
 {

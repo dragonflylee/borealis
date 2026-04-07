@@ -142,6 +142,12 @@ namespace nvg {
 
     class DkRenderer {
         private:
+            enum class DescriptorOwner : u8 {
+                Free = 0,
+                Texture,
+                External,
+            };
+
             enum SamplerType : u8 {
                 SamplerType_MipFilter = 1 << 0,
                 SamplerType_Nearest   = 1 << 1,
@@ -176,11 +182,14 @@ namespace nvg {
             std::vector<std::shared_ptr<Texture>> m_textures;
             CDescriptorSet<MaxImages> m_image_descriptor_set;
             CDescriptorSet<SamplerType_Total> m_sampler_descriptor_set;
-            std::array<int, MaxImages> m_image_descriptor_mappings;
-            int m_last_image_descriptor = 0;
+            std::array<DescriptorOwner, MaxImages> m_image_descriptor_owners;
+            std::array<int, MaxImages> m_image_descriptor_images;
+            int m_last_image_descriptor = -1;
 
             int AcquireImageDescriptor(std::shared_ptr<Texture> texture, int image);
             void FreeImageDescriptor(int image);
+            int FindFreeImageDescriptor() const;
+            void TrimImageDescriptorTail();
             void SetUniforms(const DKNVGcontext &ctx, int offset, int image);
 
             void UpdateVertexBuffer(const void *data, size_t size);
@@ -206,8 +215,10 @@ namespace nvg {
             int GetTextureSize(const DKNVGcontext &ctx, int id, int *w, int *h);
             const DKNVGtextureDescriptor *GetTextureDescriptor(const DKNVGcontext &ctx, int id);
 
-            CDescriptorSet<4096U> *GetImageDescriptor() { return &m_image_descriptor_set; }
             int AllocateImageIndex();
+            bool FreeImageIndex(int index);
+            bool UpdateImageDescriptor(dk::CmdBuf cmdbuf, int index, dk::ImageDescriptor const& descriptor);
+            void InvalidateImageDescriptors(dk::CmdBuf cmdbuf);
 
             void Flush(DKNVGcontext &ctx);
     };

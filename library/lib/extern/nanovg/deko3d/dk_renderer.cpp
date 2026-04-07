@@ -106,7 +106,7 @@ namespace nvg {
     }
 
     DkRenderer::DkRenderer(unsigned int view_width, unsigned int view_height, dk::Device device, dk::Queue queue, CMemPool &image_mem_pool, CMemPool &code_mem_pool, CMemPool &data_mem_pool) :
-        m_view_width(view_width), m_view_height(view_height), m_device(device), m_queue(queue), m_image_mem_pool(image_mem_pool), m_code_mem_pool(code_mem_pool), m_data_mem_pool(data_mem_pool), m_image_descriptor_mappings({0})
+        m_view_width(view_width), m_view_height(view_height), m_device(device), m_queue(queue), m_image_mem_pool(image_mem_pool), m_code_mem_pool(code_mem_pool), m_data_mem_pool(data_mem_pool), m_image_descriptor_owners{}, m_image_descriptor_images{}
     {
         printf("DkRenderer create\n");
         /* Create a dynamic command buffer and allocate memory for it. */
@@ -161,71 +161,102 @@ namespace nvg {
         m_textures.clear();
     }
 
-    int DkRenderer::AcquireImageDescriptor(std::shared_ptr<Texture> texture, int image) {
-        int free_image_descriptor = m_last_image_descriptor + 1;
-        int mapping = 0;
-
+    int DkRenderer::FindFreeImageDescriptor() const {
         for (int desc = 0; desc <= m_last_image_descriptor; desc++) {
-            mapping = m_image_descriptor_mappings[desc];
-
-            /* We've found the image descriptor requested. */
-            if (mapping == image) {
+            if (m_image_descriptor_owners[desc] == DescriptorOwner::Free) {
                 return desc;
-            }
-
-            /* Update the free image descriptor. */
-            if (mapping == 0 && free_image_descriptor == m_last_image_descriptor + 1) {
-                free_image_descriptor = desc;
             }
         }
 
-        /* No descriptors are free. */
-        if (free_image_descriptor >= static_cast<int>(MaxImages)) {
+        const int next_descriptor = m_last_image_descriptor + 1;
+        if (next_descriptor >= static_cast<int>(MaxImages)) {
             return -1;
         }
 
-        /* Update descriptor sets. */
-        m_image_descriptor_set.update(m_dyn_cmd_buf, free_image_descriptor, texture->GetImageDescriptor());
+        return next_descriptor;
+    }
 
-        /* Flush the descriptor cache. */
+    void DkRenderer::TrimImageDescriptorTail() {
+        while (m_last_image_descriptor >= 0 &&
+               m_image_descriptor_owners[m_last_image_descriptor] == DescriptorOwner::Free) {
+            m_last_image_descriptor--;
+        }
+    }
+
+    int DkRenderer::AcquireImageDescriptor(std::shared_ptr<Texture> texture, int image) {
+        for (int desc = 0; desc <= m_last_image_descriptor; desc++) {
+            if (m_image_descriptor_owners[desc] == DescriptorOwner::Texture &&
+                m_image_descriptor_images[desc] == image) {
+                return desc;
+            }
+        }
+
+        const int free_image_descriptor = this->FindFreeImageDescriptor();
+        if (free_image_descriptor == -1) {
+            return -1;
+        }
+
+        m_image_descriptor_set.update(m_dyn_cmd_buf, free_image_descriptor, texture->GetImageDescriptor());
         m_dyn_cmd_buf.barrier(DkBarrier_None, DkInvalidateFlags_Descriptors);
 
-        /* Update the map. */
-        m_image_descriptor_mappings[free_image_descriptor] = image;
-        m_last_image_descriptor = free_image_descriptor;
+        m_image_descriptor_owners[free_image_descriptor] = DescriptorOwner::Texture;
+        m_image_descriptor_images[free_image_descriptor] = image;
+        if (free_image_descriptor > m_last_image_descriptor) {
+            m_last_image_descriptor = free_image_descriptor;
+        }
         return free_image_descriptor;
     }
 
     int DkRenderer::AllocateImageIndex() {
-        int free_image_descriptor = m_last_image_descriptor + 1;
-        
-        for (int desc = 0; desc <= m_last_image_descriptor; desc++) {
-            /* Update the free image descriptor. */
-            if (m_image_descriptor_mappings[desc] == 0) {
-                free_image_descriptor = desc;
-            }
-        }
-
-        /* No descriptors are free. */
-        if (free_image_descriptor >= static_cast<int>(MaxImages)) {
+        const int free_image_descriptor = this->FindFreeImageDescriptor();
+        if (free_image_descriptor == -1) {
             return -1;
         }
 
-        /* Flush the descriptor cache. */
-        m_dyn_cmd_buf.barrier(DkBarrier_None, DkInvalidateFlags_Descriptors);
-
-        /* Update the map. */
-        m_image_descriptor_mappings[free_image_descriptor] = free_image_descriptor;
-        m_last_image_descriptor = free_image_descriptor;
+        m_image_descriptor_owners[free_image_descriptor] = DescriptorOwner::External;
+        m_image_descriptor_images[free_image_descriptor] = 0;
+        if (free_image_descriptor > m_last_image_descriptor) {
+            m_last_image_descriptor = free_image_descriptor;
+        }
         return free_image_descriptor;
+    }
+
+    bool DkRenderer::FreeImageIndex(int index) {
+        if (index < 0 || index >= static_cast<int>(MaxImages) ||
+            m_image_descriptor_owners[index] != DescriptorOwner::External) {
+            return false;
+        }
+
+        m_image_descriptor_owners[index] = DescriptorOwner::Free;
+        m_image_descriptor_images[index] = 0;
+        this->TrimImageDescriptorTail();
+        return true;
+    }
+
+    bool DkRenderer::UpdateImageDescriptor(dk::CmdBuf cmdbuf, int index, dk::ImageDescriptor const& descriptor) {
+        if (index < 0 || index >= static_cast<int>(MaxImages) ||
+            m_image_descriptor_owners[index] != DescriptorOwner::External) {
+            return false;
+        }
+
+        m_image_descriptor_set.update(cmdbuf, index, descriptor);
+        return true;
+    }
+
+    void DkRenderer::InvalidateImageDescriptors(dk::CmdBuf cmdbuf) {
+        cmdbuf.barrier(DkBarrier_None, DkInvalidateFlags_Descriptors);
     }
 
     void DkRenderer::FreeImageDescriptor(int image) {
         for (int desc = 0; desc <= m_last_image_descriptor; desc++) {
-            if (m_image_descriptor_mappings[desc] == image) {
-                m_image_descriptor_mappings[desc] = 0;
+            if (m_image_descriptor_owners[desc] == DescriptorOwner::Texture &&
+                m_image_descriptor_images[desc] == image) {
+                m_image_descriptor_owners[desc] = DescriptorOwner::Free;
+                m_image_descriptor_images[desc] = 0;
             }
         }
+
+        this->TrimImageDescriptorTail();
     }
 
     void DkRenderer::UpdateVertexBuffer(const void *data, size_t size) {
@@ -552,7 +583,7 @@ namespace nvg {
                 const DKNVGcall &call = ctx.calls[i];
 
                 /* Perform blending. */
-                m_dyn_cmd_buf.bindBlendStates(0, { dk::BlendState{}.setFactors(static_cast<DkBlendFactor>(call.blendFunc.srcRGB), static_cast<DkBlendFactor>(call.blendFunc.dstRGB), static_cast<DkBlendFactor>(call.blendFunc.srcAlpha), static_cast<DkBlendFactor>(call.blendFunc.dstRGB)) });
+                m_dyn_cmd_buf.bindBlendStates(0, { dk::BlendState{}.setFactors(static_cast<DkBlendFactor>(call.blendFunc.srcRGB), static_cast<DkBlendFactor>(call.blendFunc.dstRGB), static_cast<DkBlendFactor>(call.blendFunc.srcAlpha), static_cast<DkBlendFactor>(call.blendFunc.dstAlpha)) });
 
                 if (call.type == DKNVG_FILL) {
                     this->DrawFill(ctx, call);
