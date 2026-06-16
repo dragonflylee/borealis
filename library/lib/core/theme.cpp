@@ -32,6 +32,10 @@ static ThemeValues lightThemeValues = {
     { "brls/click_pulse", nvgRGBA(13, 182, 213, 38) }, // same as highlight color1 with different opacity
     { "brls/accent", nvgRGB(49, 79, 235) },
 
+    // Notification (toast pill)
+    { "brls/notification/background", nvgRGBA(45, 45, 45, 230) },
+    { "brls/notification/text", nvgRGB(255, 255, 255) },
+
     // Highlight
     { "brls/highlight/background", nvgRGB(252, 255, 248) },
     { "brls/highlight/color1", nvgRGB(13, 182, 213) },
@@ -90,6 +94,10 @@ static ThemeValues darkThemeValues = {
     { "brls/backdrop", nvgRGBA(0, 0, 0, 178) },
     { "brls/click_pulse", nvgRGBA(25, 138, 198, 38) }, // same as highlight color1 with different opacity
     { "brls/accent", nvgRGB(0, 255, 204) },
+
+    // Notification (toast pill)
+    { "brls/notification/background", nvgRGBA(0, 0, 0, 217) },
+    { "brls/notification/text", nvgRGB(255, 255, 255) },
 
     // Highlight
     { "brls/highlight/background", nvgRGB(31, 34, 39) },

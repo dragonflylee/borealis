@@ -630,7 +630,10 @@ bool Application::setInputType(InputType type)
     if (type == InputType::GAMEPAD)
     {
         Application::setDrawCoursor(false);
-        Application::currentFocus->onFocusGained();
+        // currentFocus may legitimately be null (e.g. the focused view was
+        // destroyed and nothing was focused since).
+        if (Application::currentFocus)
+            Application::currentFocus->onFocusGained();
     }
 
     return true;

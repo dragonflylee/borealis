@@ -36,10 +36,13 @@ static StyleValues styleValues = {
     { "brls/animations/notification_timeout", 4000.0f },
     { "brls/animations/notification_show", 300.0f },
 
-    // Notification
-    { "brls/notification/width", 280.0f },
-    { "brls/notification/padding", 16.0f },
-    { "brls/notification/slide", 40.0f },
+    // Notification (bottom-centered toast pill)
+    { "brls/notification/max_width", 760.0f },
+    { "brls/notification/padding_sides", 24.0f },
+    { "brls/notification/padding_top_bottom", 12.0f },
+    { "brls/notification/slide", 16.0f }, // slide-up distance on show / slide-down on hide
+    { "brls/notification/margin", 16.0f }, // gap between the pill and the bottom bar
+    { "brls/notification/spacing", 8.0f }, // gap between stacked pills
 
     // Highlight
     { "brls/highlight/stroke_width", 5.0f },

@@ -33,6 +33,8 @@ class Notification : public Box
     explicit Notification(const std::string& text);
     ~Notification() override;
 
+    void onLayout() override;
+
     Animatable timeoutTimer;
 
   private:
