@@ -153,6 +153,10 @@ int fonsTextIterNext(FONScontext* stash, FONStextIter* iter, struct FONSquad* qu
 // Pull texture changes
 const unsigned char* fonsGetTextureData(FONScontext* stash, int* width, int* height);
 int fonsValidateTexture(FONScontext* s, int* dirty);
+#ifdef PS5_NATIVE_GPU
+// Synchronous NanoVG upload: inspect first, acknowledge only after success.
+int fonsPeekTexture(FONScontext* s, int* dirty);
+#endif
 
 // Draws the stash texture for debugging
 void fonsDrawDebug(FONScontext* s, float x, float y);
@@ -2038,6 +2042,15 @@ const unsigned char* fonsGetTextureData(FONScontext* stash, int* width, int* hei
 	return stash->texData;
 }
 
+#ifdef PS5_NATIVE_GPU
+int fonsPeekTexture(FONScontext* stash, int* dirty)
+{
+	if (stash->dirtyRect[0] >= stash->dirtyRect[2] || stash->dirtyRect[1] >= stash->dirtyRect[3]) return 0;
+	memcpy(dirty, stash->dirtyRect, 4 * sizeof(int));
+	return 1;
+}
+#endif
+
 int fonsValidateTexture(FONScontext* stash, int* dirty)
 {
 	if (stash->dirtyRect[0] < stash->dirtyRect[2] && stash->dirtyRect[1] < stash->dirtyRect[3]) {
@@ -2147,7 +2160,16 @@ int fonsExpandAtlas(FONScontext* stash, int width, int height)
 int fonsResetAtlas(FONScontext* stash, int width, int height)
 {
 	int i, j;
+#ifdef PS5_NATIVE_GPU
+	unsigned char* replacement;
+#endif
 	if (stash == NULL) return 0;
+#ifdef PS5_NATIVE_GPU
+	// Keep old pixels, packing and glyphs intact if CPU allocation fails.
+	if (width <= 0 || height <= 0 || (size_t)height > (size_t)-1 / (size_t)width) return 0;
+	replacement = (unsigned char*)malloc((size_t)width * (size_t)height);
+	if (replacement == NULL) return 0;
+#endif
 
 	// Flush pending glyphs.
 	fons__flush(stash);
@@ -2155,16 +2177,29 @@ int fonsResetAtlas(FONScontext* stash, int width, int height)
 	// Create new texture
 	if (stash->params.renderResize != NULL) {
 		if (stash->params.renderResize(stash->params.userPtr, width, height) == 0)
+#ifdef PS5_NATIVE_GPU
+		{
+			free(replacement);
 			return 0;
+		}
+#else
+			return 0;
+#endif
 	}
 
 	// Reset atlas
 	fons__atlasReset(stash->atlas, width, height);
 
 	// Clear texture data.
+#ifdef PS5_NATIVE_GPU
+	free(stash->texData);
+	stash->texData = replacement;
+	memset(stash->texData, 0, (size_t)width * (size_t)height);
+#else
 	stash->texData = (unsigned char*)realloc(stash->texData, width * height);
 	if (stash->texData == NULL) return 0;
 	memset(stash->texData, 0, width * height);
+#endif
 
 	// Reset dirty rect
 	stash->dirtyRect[0] = width;
