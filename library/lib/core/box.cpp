@@ -505,7 +505,11 @@ void Box::inflateFromXMLRes(const std::string& name)
 #ifdef USE_LIBROMFS
     return Box::inflateFromXMLString(romfs::get(name).string());
 #else
+#ifdef PS5_NATIVE_GPU
+    return Box::inflateFromXMLFile(resourceBase() + name);
+#else
     return Box::inflateFromXMLFile(std::string(BRLS_RESOURCES) + name);
+#endif
 #endif
 }
 
