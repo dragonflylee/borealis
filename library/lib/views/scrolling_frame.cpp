@@ -19,6 +19,9 @@
 #include <borealis/core/touch/scroll_gesture.hpp>
 #include <borealis/core/touch/tap_gesture.hpp>
 #include <borealis/views/scrolling_frame.hpp>
+#ifdef PS5_NATIVE_GPU
+#include <borealis/views/h_scrolling_frame.hpp>
+#endif
 
 namespace brls
 {
@@ -230,9 +233,25 @@ View* ScrollingFrame::findTopMostFocusableView()
         if (focusCheckDefaultFocus)
             focusCheck = focusCheckDefaultFocus;
 
+#ifdef PS5_NATIVE_GPU
+        while (focusCheck && !isFocusWithinViewport(focusCheck, FocusDirection::DOWN))
+#else
         while (focusCheck && !focusCheck->getFrame().inscribed(frame))
+#endif
         {
+#ifdef PS5_NATIVE_GPU
+            // Navigation may deliberately hold focus until scrolling catches up.
+            // A search must yield to the next frame instead of retrying that view.
+            View* parent = focusCheck->getParent();
+            if (!parent)
+                return nullptr;
+            View* next = parent->getNextFocus(FocusDirection::DOWN, focusCheck);
+            if (next == focusCheck)
+                return nullptr;
+            focusCheck = next;
+#else
             focusCheck = focusCheck->getParent()->getNextFocus(FocusDirection::DOWN, focusCheck);
+#endif
         }
 
         return focusCheck;
@@ -491,6 +510,30 @@ void ScrollingFrame::onChildFocusLost(View* directChild, View* focusedView)
     this->childFocused = false;
 }
 
+#ifdef PS5_NATIVE_GPU
+bool ScrollingFrame::isFocusWithinViewport(View* view, FocusDirection direction)
+{
+    if (!view)
+        return false;
+
+    const Rect frame = view->getFrame();
+    const Rect viewport = this->getFrame();
+    if (direction == FocusDirection::UP || direction == FocusDirection::DOWN)
+    {
+        // A nested horizontal scroller owns horizontal reveal. Requiring
+        // its remembered card to fit in X can trap Up/Down: scrolling this
+        // vertical frame cannot fix horizontal clipping in another row.
+        bool horizontalScroller = false;
+        View* parent = view->getParent();
+        for (; parent && parent != this; parent = parent->getParent())
+            horizontalScroller |= dynamic_cast<HScrollingFrame*>(parent) != nullptr;
+
+        if (parent == this && horizontalScroller)
+            return frame.getMinY() >= viewport.getMinY() && frame.getMaxY() <= viewport.getMaxY();
+    }
+    return frame.inscribed(viewport);
+}
+#endif
 View* ScrollingFrame::getParentNavigationDecision(View* from, View* newFocus, FocusDirection direction)
 {
     if (behavior == ScrollingBehavior::CENTERED)
@@ -505,7 +548,11 @@ View* ScrollingFrame::getParentNavigationDecision(View* from, View* newFocus, Fo
         if (from == contentView)
         {
             naturalScrollingCanScroll = true;
+#ifdef PS5_NATIVE_GPU
+            if (isFocusWithinViewport(currentFocus, direction))
+#else
             if (currentFocus->getFrame().inscribed(this->getFrame()))
+#endif
                 return currentFocus;
 
             return this;
@@ -514,13 +561,21 @@ View* ScrollingFrame::getParentNavigationDecision(View* from, View* newFocus, Fo
     }
     else
     {
+#ifdef PS5_NATIVE_GPU
+        if (isFocusWithinViewport(newFocus, direction))
+#else
         if (newFocus->getFrame().inscribed(this->getFrame()))
+#endif
             return newFocus;
         else
             naturalScrollingCanScroll = true;
     }
 
+#ifdef PS5_NATIVE_GPU
+    if (isFocusWithinViewport(currentFocus, direction))
+#else
     if (currentFocus->getFrame().inscribed(this->getFrame()))
+#endif
         return currentFocus;
 
     return this;
