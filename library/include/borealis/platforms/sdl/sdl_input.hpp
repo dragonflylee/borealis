@@ -7,7 +7,7 @@
 namespace brls
 {
 
-// Input manager for GLFW gamepad and keyboard
+// Input manager for SDL gamepad and keyboard
 class SDLInputManager : public InputManager
 {
   public:
