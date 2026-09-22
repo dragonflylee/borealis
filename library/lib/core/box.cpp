@@ -354,6 +354,10 @@ View* Box::getDefaultFocus()
     if (this->isFocusable())
         return this;
 
+    // A box that isn't visible must not offer its children either.
+    if (getVisibility() != Visibility::VISIBLE)
+        return nullptr;
+
     if (lastFocusedView) {
         View* view = lastFocusedView->getDefaultFocus();
         if (view)
