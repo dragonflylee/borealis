@@ -124,6 +124,9 @@ class ScrollingFrame : public Box
     void naturalScrollingBehaviour();
     void naturalScrollingButtonProcessing(FocusDirection focusDirection, bool* repeat);
     View* findTopMostFocusableView();
+#ifdef PS5_NATIVE_GPU
+    bool isFocusWithinViewport(View* view, FocusDirection direction);
+#endif
 
     void setupScrollingIndicator();
     void updateScrollingIndicatior();

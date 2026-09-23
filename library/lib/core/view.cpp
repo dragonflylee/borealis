@@ -1566,7 +1566,11 @@ std::string View::getFilePathXMLAttributeValue(std::string value)
 #ifdef USE_LIBROMFS
         return resPath;
 #else
+#ifdef PS5_NATIVE_GPU
+        return resourceBase() + resPath;
+#else
         return std::string(BRLS_RESOURCES) + resPath;
+#endif
 #endif
     }
 
@@ -1843,7 +1847,11 @@ View* View::createFromXMLResource(std::string name)
 #ifdef USE_LIBROMFS
     return View::createFromXMLString(romfs::get("xml/" + name).string());
 #else
+#ifdef PS5_NATIVE_GPU
+    return View::createFromXMLFile(resourceBase() + "xml/" + name);
+#else
     return View::createFromXMLFile(std::string(BRLS_RESOURCES) + "xml/" + name);
+#endif
 #endif
 }
 

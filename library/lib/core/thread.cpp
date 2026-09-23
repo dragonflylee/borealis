@@ -19,6 +19,10 @@
 #include <borealis/core/logger.hpp>
 #include <borealis/core/thread.hpp>
 #include <exception>
+#ifdef PS5_NATIVE_GPU
+#include <atomic>
+#include <list>
+#endif
 
 #ifdef BOREALIS_USE_STD_THREAD
 #include <thread>
@@ -32,6 +36,28 @@
 
 namespace brls
 {
+
+#ifdef PS5_NATIVE_GPU
+// File-local native storage leaves the shared Threading declaration intact.
+// Pending timers retain their nodes while moving between frame batches.
+static std::list<DelayOperation> nativeDelayTasks;
+static std::atomic<bool> nativeTaskLoopActive{true};
+
+// Callback failures must not terminate the worker or strand later UI work.
+// Keep diagnostics bounded and independent of arbitrary exception text. The
+// logger itself can allocate, so failure reporting must also be contained.
+static void reportDeferredFailure(const char* kind) noexcept
+{
+    static std::atomic<unsigned> failures{0};
+    unsigned observed = failures.load(std::memory_order_relaxed);
+    do
+    {
+        if (observed >= 16) return;
+    } while (!failures.compare_exchange_weak(observed, observed + 1, std::memory_order_relaxed));
+    try { Logger::error("ps5 native: {} callback failed", kind); }
+    catch (...) {}
+}
+#endif
 
 #ifdef BOREALIS_USE_STD_THREAD
 static std::thread *task_loop_thread = nullptr;
@@ -89,7 +115,11 @@ size_t Threading::delay(long milliseconds, const std::function<void()>& func)
 #endif
     operation.func              = func;
     operation.index             = ++m_delay_index;
+#ifdef PS5_NATIVE_GPU
+    nativeDelayTasks.push_back(std::move(operation));
+#else
     m_delay_tasks.push_back(operation);
+#endif
     return m_delay_index;
 }
 
@@ -101,6 +131,49 @@ void Threading::cancelDelay(size_t iter)
 
 void Threading::performSyncTasks()
 {
+#ifdef PS5_NATIVE_GPU
+    std::vector<std::function<void()>> local;
+    {
+        std::lock_guard<std::mutex> guard(m_sync_mutex);
+        local.swap(m_sync_functions);
+    }
+    for (auto& func : local)
+    {
+        try { func(); }
+        catch (...) { reportDeferredFailure("UI"); }
+    }
+
+    std::list<DelayOperation> delay_local;
+    {
+        std::lock_guard<std::mutex> guard(m_delay_mutex);
+        delay_local.splice(delay_local.end(), nativeDelayTasks);
+    }
+    // Capture this frame's batch. Newly scheduled timers wait until the next
+    // frame; original future timers are returned without allocating/copying.
+    for (auto next = delay_local.begin(); next != delay_local.end();)
+    {
+        auto current = next++;
+        auto& operation = *current;
+        {
+            std::lock_guard<std::mutex> guard(m_delay_mutex);
+            if (m_delay_cancel_set.erase(operation.index)) continue;
+        }
+        auto now = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - operation.startPoint).count();
+        if (duration >= operation.delayMilliseconds)
+        {
+            try { operation.func(); }
+            catch (...) { reportDeferredFailure("timer"); }
+            std::lock_guard<std::mutex> guard(m_delay_mutex);
+            m_delay_cancel_set.erase(operation.index);
+        }
+        else
+        {
+            std::lock_guard<std::mutex> guard(m_delay_mutex);
+            nativeDelayTasks.splice(nativeDelayTasks.end(), delay_local, current);
+        }
+    }
+#else
     m_sync_mutex.lock();
     auto local = m_sync_functions;
     m_sync_functions.clear();
@@ -165,17 +238,26 @@ void Threading::performSyncTasks()
             m_delay_mutex.unlock();
         }
     }
+#endif
 }
 
 void Threading::start()
 {
+#ifdef PS5_NATIVE_GPU
+    nativeTaskLoopActive = true;
+#else
     task_loop_active = true;
+#endif
     start_task_loop();
 }
 
 void Threading::stop()
 {
+#ifdef PS5_NATIVE_GPU
+    nativeTaskLoopActive = false;
+#else
     task_loop_active = false;
+#endif
 
 #ifdef BOREALIS_USE_STD_THREAD
     task_loop_thread->join();
@@ -190,19 +272,35 @@ void Threading::std_task_loop() {
 }
 void* Threading::task_loop(void* a)
 {
+#ifdef PS5_NATIVE_GPU
+    while (nativeTaskLoopActive)
+#else
     while (task_loop_active)
+#endif
     {
         std::vector<std::function<void()>> m_tasks_copy;
         {
             std::lock_guard<std::mutex> guard(m_async_mutex);
+#ifdef PS5_NATIVE_GPU
+            m_tasks_copy.swap(m_async_tasks);
+#else
             m_tasks_copy = m_async_tasks;
             m_async_tasks.clear();
+#endif
         }
 
+#ifdef PS5_NATIVE_GPU
+        for (auto& task : m_tasks_copy)
+        {
+            try { task(); }
+            catch (...) { reportDeferredFailure("background"); }
+        }
+#else
         for (auto task : m_tasks_copy)
         {
             task();
         }
+#endif
 
         retro_sleep(500);
     }

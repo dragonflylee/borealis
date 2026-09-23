@@ -43,7 +43,9 @@ if (USE_BOOST_FILESYSTEM)
         list(APPEND BRLS_PLATFORM_OPTION -DUSE_BOOST_FILESYSTEM)
     endif()
 elseif ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9.1) OR
-    (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT WIN32) AND NOT PLATFORM_ANDROID AND NOT PLATFORM_PS4)
+    (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT WIN32) AND NOT PLATFORM_ANDROID AND NOT PLATFORM_PS4 AND NOT PLATFORM_PS5)
+    # PS5 uses clang + libc++, which carries std::filesystem itself; there is no
+    # libstdc++fs in the prospero sysroot.
     list(APPEND BRLS_PLATFORM_LIBS stdc++fs)
 endif ()
 
@@ -214,6 +216,26 @@ elseif(PLATFORM_PS4)
     else ()
         set(BRLS_PLATFORM_RESOURCES_PATH "\"/app0/resources/\"")
     endif ()
+elseif(PLATFORM_PS5)
+    if (PS5_NATIVE_GPU)
+        if (NOT EXISTS "${PS5_NATIVE_SDL_PREFIX}/lib/libSDL2.a")
+            message(FATAL_ERROR "Native SDL services are missing: ${PS5_NATIVE_SDL_PREFIX}")
+        endif ()
+        add_library(SDL2::SDL2-static STATIC IMPORTED)
+        set_target_properties(SDL2::SDL2-static PROPERTIES
+            IMPORTED_LOCATION "${PS5_NATIVE_SDL_PREFIX}/lib/libSDL2.a"
+            INTERFACE_INCLUDE_DIRECTORIES "${PS5_NATIVE_SDL_PREFIX}/include;${PS5_NATIVE_SDL_PREFIX}/include/SDL2")
+    endif ()
+    list(APPEND BOREALIS_SOURCE
+            ${BOREALIS_PATH}/lib/platforms/sdl
+            ${BOREALIS_PATH}/lib/platforms/desktop)
+    file(GLOB_RECURSE PS5_PLATFORM_SRC "${BOREALIS_PATH}/lib/platforms/ps5/*.cpp")
+    list(APPEND BOREALIS_SRC ${PS5_PLATFORM_SRC})
+    # SDL2::SDL2-static pulls in the SceVideoOut/ScePad/SceAudioOut stubs it
+    # needs by itself; SceSystemService is for the extra calls in ps5_platform.
+    list(APPEND BRLS_PLATFORM_LIBS SDL2::SDL2-static SceSystemService)
+    list(APPEND BRLS_PLATFORM_OPTION -D__SDL2__ -DPS5)
+    set(BRLS_PLATFORM_RESOURCES_PATH "\"/app0/resources/\"")
 elseif(PLATFORM_ANDROID)
     if (USE_SYSTEM_SDL2)
         find_package(SDL2 REQUIRED)

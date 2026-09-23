@@ -232,7 +232,19 @@ View* HScrollingFrame::findLeftMostFocusableView()
 
         while (focusCheck && !focusCheck->getFrame().inscribed(frame))
         {
+#ifdef PS5_NATIVE_GPU
+            // Navigation may deliberately hold focus until scrolling catches up.
+            // A search must yield to the next frame instead of retrying that view.
+            View* parent = focusCheck->getParent();
+            if (!parent)
+                return nullptr;
+            View* next = parent->getNextFocus(FocusDirection::RIGHT, focusCheck);
+            if (next == focusCheck)
+                return nullptr;
+            focusCheck = next;
+#else
             focusCheck = focusCheck->getParent()->getNextFocus(FocusDirection::RIGHT, focusCheck);
+#endif
         }
 
         return focusCheck;

@@ -745,6 +745,13 @@ bool Application::handleAction(const ActionType type, const int button, const bo
 
 void Application::frame()
 {
+#ifdef PS5_NATIVE_GPU
+    if (!Application::platform->getVideoContext()->isRenderAvailable())
+    {
+        Application::quit();
+        return;
+    }
+#endif
     VideoContext* videoContext = Application::platform->getVideoContext();
 
     // Frame context
@@ -808,6 +815,10 @@ void Application::frame()
 
     // End frame
     nvgResetTransform(Application::getNVGContext()); // scale
+#ifdef PS5_NATIVE_HDR
+    // Select composition after embedded video and deferred UI are both known.
+    videoContext->hdrBeforeUiFlush(frameContext.vg);
+#endif
     nvgEndFrame(Application::getNVGContext());
 
     Application::platform->getVideoContext()->endFrame();

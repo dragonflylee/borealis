@@ -409,7 +409,9 @@ SDLInputManager::SDLInputManager(SDL_Window* window)
 {
 
     int32_t flags = SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER;
-#ifndef __WINRT__
+    // Native PS5 rumble uses the gamecontroller driver; its SDL build disables
+    // the separate generic haptic subsystem.
+#if !defined(__WINRT__) && !defined(PS5_NATIVE_GPU)
     flags |= SDL_INIT_HAPTIC;
 #endif
     if (SDL_Init(flags) < 0)

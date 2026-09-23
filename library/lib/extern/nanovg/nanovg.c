@@ -185,7 +185,11 @@ static float nvg__normalize(float *x, float* y)
 	return d;
 }
 
+#ifdef PS5_NATIVE_GPU
+static int nvg__flushTextTexture(NVGcontext* ctx);
+#else
 static void nvg__flushTextTexture(NVGcontext* ctx);
+#endif
 
 static void nvg__deletePathCache(NVGpathCache* c)
 {
@@ -407,7 +411,9 @@ void nvgBeginFrame(NVGcontext* ctx, float windowWidth, float windowHeight, float
 	ctx->fillTriCount = 0;
 	ctx->strokeTriCount = 0;
 	ctx->textTriCount = 0;
+#ifndef PS5_NATIVE_GPU
 	ctx->textTextureDirty = 0;
+#endif
 }
 
 void nvgCancelFrame(NVGcontext* ctx)
@@ -418,8 +424,12 @@ void nvgCancelFrame(NVGcontext* ctx)
 void nvgEndFrame(NVGcontext* ctx)
 {
 	if(ctx->textTextureDirty != 0) {
+#ifdef PS5_NATIVE_GPU
+		ctx->textTextureDirty = !nvg__flushTextTexture(ctx);
+#else
 		nvg__flushTextTexture(ctx);
 		ctx->textTextureDirty=0;
+#endif
 	}
 
 	ctx->params.renderFlush(ctx->params.userPtr);
@@ -2430,6 +2440,47 @@ static float nvg__getFontScale(NVGstate* state)
 	return nvg__minf(nvg__quantize(nvg__getAverageScale(state->xform), 0.01f), 4.0f);
 }
 
+#ifdef PS5_NATIVE_GPU
+static int nvg__flushTextTexture(NVGcontext* ctx)
+{
+	int dirty[4], iw, ih;
+	int image;
+	const unsigned char* data;
+	if (!fonsPeekTexture(ctx->fs, dirty)) return 1;
+	image = ctx->fontImages[ctx->fontImageIdx];
+	if (image == 0) return 0;
+	data = fonsGetTextureData(ctx->fs, &iw, &ih);
+	if (!ctx->params.renderUpdateTexture(ctx->params.userPtr, image,
+		dirty[0], dirty[1], dirty[2]-dirty[0], dirty[3]-dirty[1], data)) return 0;
+	// NanoVG/fontstash and the backend run synchronously on the UI thread.
+	fonsValidateTexture(ctx->fs, dirty);
+	return 1;
+}
+
+static int nvg__allocTextAtlas(NVGcontext* ctx)
+{
+	int iw, ih, image, created = 0;
+	if (!nvg__flushTextTexture(ctx)) return 0;
+	if (ctx->fontImageIdx >= NVG_MAX_FONTIMAGES-1) return 0;
+	image = ctx->fontImages[ctx->fontImageIdx+1];
+	if (image != 0) nvgImageSize(ctx, image, &iw, &ih);
+	else {
+		nvgImageSize(ctx, ctx->fontImages[ctx->fontImageIdx], &iw, &ih);
+		if (iw > ih) ih *= 2;
+		else iw *= 2;
+		if (iw > NVG_MAX_FONTIMAGE_SIZE || ih > NVG_MAX_FONTIMAGE_SIZE) iw = ih = NVG_MAX_FONTIMAGE_SIZE;
+		image = ctx->params.renderCreateTexture(ctx->params.userPtr, NVG_TEXTURE_ALPHA, iw, ih, 0, NULL);
+		if (image == 0) return 0;
+		created = 1;
+	}
+	if (!fonsResetAtlas(ctx->fs, iw, ih)) {
+		if (created) nvgDeleteImage(ctx, image);
+		return 0;
+	}
+	ctx->fontImages[++ctx->fontImageIdx] = image;
+	return 1;
+}
+#else
 static void nvg__flushTextTexture(NVGcontext* ctx)
 {
 	int dirty[4];
@@ -2472,6 +2523,8 @@ static int nvg__allocTextAtlas(NVGcontext* ctx)
 	fonsResetAtlas(ctx->fs, iw, ih);
 	return 1;
 }
+
+#endif
 
 static void nvg__renderText(NVGcontext* ctx, NVGvertex* verts, int nverts)
 {
