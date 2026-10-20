@@ -18,6 +18,9 @@
 #include <borealis/core/logger.hpp>
 #include <borealis/core/thread.hpp>
 #include <borealis/platforms/sdl/sdl_video.hpp>
+#ifdef PS5_NATIVE_GPU
+#include <borealis/platforms/ps5/native_display.hpp>
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -47,6 +50,12 @@ extern "C"
 #endif
 #endif
 #include <nanovg_gl.h>
+#ifdef PS5_NATIVE_HDR
+#include <borealis/platforms/ps5/native_hdr.hpp>
+#include <EGL/egl.h>
+// Application-owned, source-built runtime selector; not a firmware ABI.
+extern "C" int ps5ExperimentalSelectHdrScanout(int enabled);
+#endif
 #elif defined(BOREALIS_USE_D3D11)
 #include <nanovg_d3d11.h>
 
@@ -59,6 +68,7 @@ namespace brls
 
 static double scaleFactor = 1.0;
 
+#ifndef PS5_NATIVE_GPU
 static void sdlWindowFramebufferSizeCallback(SDL_Window* window, int width, int height)
 {
     if (!width || !height)
@@ -129,9 +139,14 @@ static int sdlWindowEventWatcher(void* data, SDL_Event* event)
     }
     return 0;
 }
+#endif
 
 SDLVideoContext::SDLVideoContext(std::string windowTitle, uint32_t windowWidth, uint32_t windowHeight, float windowXPos, float windowYPos)
 {
+#ifdef PS5_NATIVE_GPU
+    try
+    {
+#endif
 #ifdef __PSV__
 #define MAX_PATH 256
     /// Huge thanks to SonicMastr for his kindness help and contribution in psv homebrew.
@@ -167,16 +182,50 @@ SDLVideoContext::SDLVideoContext(std::string windowTitle, uint32_t windowWidth, 
     PVRSRVCreateVirtualAppHint(&hint);
 #endif
 
+#ifdef PS5_NATIVE_HDR
+    if (ps5ExperimentalSelectHdrScanout(1) != 0)
+        fatal("native HDR: could not select ten-bit presentation");
+    this->hdrSelected = true;
+#endif
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
     {
+#ifdef PS5_NATIVE_GPU
+        fatal(std::string("sdl: failed to initialize video: ") + SDL_GetError());
+#else
         Logger::error("sdl: failed to initialize");
         return;
+#endif
     }
 
     // Create window
+#ifdef PS5_NATIVE_GPU
+    // One immutable native EGL Core 3.3 window, selected with its dependencies.
+    windowWidth = ps5_native_display::width;
+    windowHeight = ps5_native_display::height;
+    Uint32 windowFlags = SDL_WINDOW_SHOWN;
+#else
     Uint32 windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI;
+#endif
 #ifdef BOREALIS_USE_OPENGL
-#ifdef __SWITCH__
+#ifdef PS5_NATIVE_GPU
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+#ifdef PS5_NATIVE_HDR
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 10);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 10);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 10);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 2);
+#else
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
+#endif
+#elif defined(__SWITCH__)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
@@ -239,6 +288,7 @@ SDLVideoContext::SDLVideoContext(std::string windowTitle, uint32_t windowWidth, 
 #endif
     windowFlags |= SDL_WINDOW_OPENGL;
 #endif
+#ifndef PS5_NATIVE_GPU
     if (VideoContext::FULLSCREEN)
     {
 #ifdef __WINRT__
@@ -247,6 +297,7 @@ SDLVideoContext::SDLVideoContext(std::string windowTitle, uint32_t windowWidth, 
         windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 #endif
     }
+#endif
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
 
     if (std::isnan(windowXPos) || std::isnan(windowYPos))
@@ -274,19 +325,62 @@ SDLVideoContext::SDLVideoContext(std::string windowTitle, uint32_t windowWidth, 
     }
 #ifdef BOREALIS_USE_OPENGL
     // Configure window
+#ifdef PS5_NATIVE_GPU
+    this->glContext = SDL_GL_CreateContext(window);
+    if (!this->glContext)
+        fatal(std::string("sdl: failed to create GL context: ") + SDL_GetError());
+    if (SDL_GL_MakeCurrent(window, this->glContext) != 0)
+        fatal(std::string("sdl: failed to bind GL context: ") + SDL_GetError());
+#else
     SDL_GLContext context = SDL_GL_CreateContext(window);
     SDL_GL_MakeCurrent(window, context);
 #endif
+#endif
+#ifndef PS5_NATIVE_GPU
     SDL_AddEventWatch(sdlWindowEventWatcher, window);
+#endif
 #ifdef BOREALIS_USE_OPENGL
 #if !defined(__PSV__) && !defined(PS4)
     // Load OpenGL routines using glad
+#ifdef PS5_NATIVE_GPU
+    if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress))
+        fatal("sdl: failed to load OpenGL entry points");
+#else
     gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress);
+#endif
 #endif
 
     Logger::info("sdl: GL Vendor: {}", (const char*)glGetString(GL_VENDOR));
     Logger::info("sdl: GL Renderer: {}", (const char*)glGetString(GL_RENDERER));
     Logger::info("sdl: GL Version: {}", (const char*)glGetString(GL_VERSION));
+
+#ifdef PS5_NATIVE_HDR
+    // Query the selected EGL configuration, not the requested SDL attributes.
+    const EGLDisplay display = eglGetCurrentDisplay();
+    const EGLContext context = eglGetCurrentContext();
+    EGLint configId = 0, count = 0;
+    if (!eglQueryContext(display, context, EGL_CONFIG_ID, &configId))
+        fatal("native HDR: unavailable EGL configuration");
+    const EGLint attributes[] = {EGL_CONFIG_ID, configId, EGL_NONE};
+    EGLConfig config = nullptr;
+    if (!eglChooseConfig(display, attributes, &config, 1, &count) || count != 1)
+        fatal("native HDR: unavailable EGL configuration");
+    for (EGLint attribute : {EGL_RED_SIZE, EGL_GREEN_SIZE, EGL_BLUE_SIZE, EGL_ALPHA_SIZE}) {
+        EGLint bits = 0;
+        if (!eglGetConfigAttrib(display, config, attribute, &bits) ||
+            bits != (attribute == EGL_ALPHA_SIZE ? 2 : 10))
+            fatal("native HDR: ten-bit EGL configuration required");
+    }
+    int drawableWidth = 0, drawableHeight = 0;
+    SDL_GL_GetDrawableSize(this->window, &drawableWidth, &drawableHeight);
+    if (drawableWidth != int(windowWidth) || drawableHeight != int(windowHeight))
+        fatal("native HDR: drawable geometry differs from compiled display");
+    this->hdrFrame = std::make_unique<ps5_native_hdr::Frame>();
+    if (!this->hdrFrame->open(windowWidth, windowHeight))
+        fatal("native HDR: could not allocate linear composition target");
+    Logger::info("native HDR: linear composition {}x{}, image bytes {}",
+        windowWidth, windowHeight, this->hdrFrame->imageBytes());
+#endif
 
     // Initialize nanovg
 #ifdef __PSV__
@@ -316,6 +410,30 @@ SDLVideoContext::SDLVideoContext(std::string windowTitle, uint32_t windowWidth, 
     setSwapInterval(VideoContext::swapInterval);
 
     // Setup window state
+#ifdef PS5_NATIVE_GPU
+    int width = 0, height = 0;
+    int fWidth = 0, fHeight = 0;
+    ps5_native_display::Dimensions observed;
+    if (!ps5_native_display::queryAndApply(observed,
+        [this](int* w, int* h) { SDL_GetWindowSize(window, w, h); },
+        [this](int* w, int* h) { SDL_GL_GetDrawableSize(window, w, h); },
+        [&](const ps5_native_display::Dimensions& actual) {
+            width = actual.windowWidth;
+            height = actual.windowHeight;
+            fWidth = actual.drawableWidth;
+            fHeight = actual.drawableHeight;
+            scaleFactor = fWidth * 1.0 / width;
+            Application::setWindowSize(fWidth, fHeight);
+            glViewport(0, 0, fWidth, fHeight);
+        }))
+    {
+        Logger::error("ps5 native: configured {}x{}, queried window {}x{}, drawable {}x{}",
+            ps5_native_display::width, ps5_native_display::height,
+            observed.windowWidth, observed.windowHeight,
+            observed.drawableWidth, observed.drawableHeight);
+        fatal("sdl: native display dimensions do not match configured profile");
+    }
+#else
     int width, height;
     SDL_GetWindowSize(window, &width, &height);
 
@@ -332,6 +450,7 @@ SDLVideoContext::SDLVideoContext(std::string windowTitle, uint32_t windowWidth, 
     Application::setWindowSize(fWidth, fHeight);
     D3D11_CONTEXT->onFramebufferSize(fWidth, fHeight);
 #endif
+#endif
 
     int xPos, yPos;
     SDL_GetWindowPosition(window, &xPos, &yPos);
@@ -344,19 +463,134 @@ SDLVideoContext::SDLVideoContext(std::string windowTitle, uint32_t windowWidth, 
         VideoContext::posX  = (float)xPos;
         VideoContext::posY  = (float)yPos;
     }
+#ifdef PS5_NATIVE_GPU
+    }
+    catch (...)
+    {
+        this->cleanup();
+        throw;
+    }
+#endif
 }
 
 void SDLVideoContext::beginFrame()
 {
+#ifdef PS5_NATIVE_HDR
+    if (!hdrFrame || !hdrFrame->begin()) {
+        invalidateRender();
+        fatal("native HDR: composition target unavailable");
+    }
+    hdrClearNow = hdrFrame->modeState().beginFrame();
+#endif
 #if defined(BOREALIS_USE_D3D11)
     D3D11_CONTEXT->beginFrame();
 #endif
 }
 
+#ifdef PS5_NATIVE_HDR
+uint32_t SDLVideoContext::getLinearHdrFramebuffer() const
+{
+    return hdrFrame && isRenderAvailable() ? hdrFrame->framebuffer() : 0;
+}
+bool SDLVideoContext::selectHdrVideoTarget(uint32_t& framebuffer, int& internalFormat)
+{
+    if (!hdrFrame || !isRenderAvailable() || !hdrFrame->framebuffer()) return false;
+    if (hdrFrame->modeState().videoTarget()) {
+        // Direct: mpv's PQ output is the whole window image this frame.
+        framebuffer = 0;
+        internalFormat = GL_RGB10_A2;
+        return true;
+    }
+    // Composite: the UI draws over a transparent linear layer.
+    glClearColor(0, 0, 0, 0);
+    if (!hdrFrame->clearComposition() || !hdrFrame->videoFramebuffer()) return false;
+    framebuffer = hdrFrame->videoFramebuffer();
+    internalFormat = GL_RGBA16F;
+    return true;
+}
+
+void SDLVideoContext::hdrBeforeUiFlush(NVGcontext* vg)
+{
+    if (!hdrFrame) return;
+    // Vertex bounds are only needed on video frames; menus use full-frame composition.
+    const bool queued = vg && nvglPendingCallCountGL3(vg) > 0;
+    bool small = false;
+    bool windowSafe = false;
+    if (queued && hdrFrame->modeState().videoFrame()) {
+        float bounds[4], view[2];
+        small = nvglPendingBoundsGL3(vg, bounds, view) &&
+                hdrFrame->selectUiRegion(bounds[0], bounds[1], bounds[2], bounds[3], view[0], view[1]);
+        windowSafe = small && nvglPendingStencilFreeGL3(vg) != 0;
+    }
+    if (vg) nvglSetHdrPqOutputGL3(vg, 0);
+    switch (hdrFrame->modeState().beforeUiFlush(queued, small, windowSafe)) {
+    case ps5_native_hdr::UiPreparation::WindowDirect:
+        // Draw the UI into the window itself, in PQ, over the video mpv just wrote.
+        nvglSetHdrPqOutputGL3(vg, 1);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, Application::windowWidth, Application::windowHeight);
+        return;
+    case ps5_native_hdr::UiPreparation::BoundedClear: {
+        if (!hdrFrame->clearCompositionRegion()) {
+            invalidateRender();
+            fatal("native HDR: composition target unavailable");
+        }
+        return;
+    }
+    case ps5_native_hdr::UiPreparation::None: return;
+    case ps5_native_hdr::UiPreparation::OpaqueClear:
+        ps5_native_hdr::clearColor(hdrClearColor.r, hdrClearColor.g, hdrClearColor.b, hdrClearColor.a);
+        break;
+    case ps5_native_hdr::UiPreparation::TransparentClear:
+        glClearColor(0, 0, 0, 0);
+        break;
+    }
+    {
+        if (!hdrFrame->clearComposition()) {
+            invalidateRender();
+            fatal("native HDR: composition target unavailable");
+        }
+    }
+}
+
+
+#endif
+
 void SDLVideoContext::endFrame()
 {
 #ifdef BOREALIS_USE_OPENGL
+#ifdef PS5_NATIVE_HDR
+    // Real mpv video/subtitles and deferred NanoVG UI have finished drawing to
+    // the same linear target. Encode once, before the actual platform swap.
+    {
+    if (!hdrFrame || !hdrFrame->present()) {
+        Logger::error("native HDR: PQ presentation failed");
+        invalidateRender();
+        Application::quit();
+        return;
+    }
+    }
+#endif
+#ifdef PS5
+    // SDL2's public swap function returns void; its video backend reports a
+    // failed flip through SDL_SetError. Do not report that frame to the player.
+    SDL_ClearError();
+#endif
+    {
     SDL_GL_SwapWindow(this->window);
+    }
+#ifdef PS5
+    if (*SDL_GetError())
+    {
+        Logger::error("ps5: presentation failed: {}", SDL_GetError());
+        invalidateRender();
+        Application::quit();
+        return;
+    }
+#endif
+#ifdef PS5_NATIVE_GPU
+    notifyPresented();
+#endif
 #elif defined(BOREALIS_USE_D3D11)
     D3D11_CONTEXT->endFrame();
 #endif
@@ -364,9 +598,17 @@ void SDLVideoContext::endFrame()
 
 void SDLVideoContext::setSwapInterval(int interval)
 {
+#ifdef PS5_NATIVE_GPU
+    interval = 1;
+#endif
     VideoContext::swapInterval = interval;
 #ifdef BOREALIS_USE_OPENGL
+#ifdef PS5_NATIVE_GPU
+    if (SDL_GL_SetSwapInterval(interval) != 0)
+        fatal(std::string("native fixed display swap interval unavailable: ") + SDL_GetError());
+#else
     SDL_GL_SetSwapInterval(interval);
+#endif
 #elif defined(BOREALIS_USE_D3D11)
     D3D11_CONTEXT->setSwapInterval(interval);
 #endif
@@ -375,13 +617,33 @@ void SDLVideoContext::setSwapInterval(int interval)
 void SDLVideoContext::clear(NVGcolor color)
 {
 #ifdef BOREALIS_USE_OPENGL
+#ifdef PS5_NATIVE_HDR
+    // A likely video frame defers the UI clear until the video target is known.
+    hdrClearColor = color;
+    if (!hdrClearNow) return;
+    ps5_native_hdr::clearColor(color.r, color.g, color.b, color.a);
+#else
     glClearColor(
         color.r,
         color.g,
         color.b,
         color.a);
+#endif
 
+#ifdef PS5_NATIVE_GPU
+    // The native window requests no depth buffer. NanoVG and mpv's GL
+    // renderer do not use depth testing, but the native renderer supplies a combined
+    // attachment: clearing its unused depth plane writes/flushes it on CPU.
+    // Establish the full color/stencil clear even after a renderer leaves
+    // scissor or write masks behind. Stencil is required for NanoVG clipping.
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glStencilMask(0xffffffff);
+    glClearStencil(0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+#else
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+#endif
 #elif defined(BOREALIS_USE_D3D11)
     D3D11_CONTEXT->clear(nvgRGBAf(
         color.r,
@@ -409,6 +671,22 @@ double SDLVideoContext::getScaleFactor()
 
 SDLVideoContext::~SDLVideoContext()
 {
+#ifdef PS5_NATIVE_GPU
+    this->cleanup();
+}
+
+void SDLVideoContext::cleanup()
+{
+#endif
+#ifdef PS5_NATIVE_HDR
+    if (hdrFrame) {
+        if (!hdrFrame->close()) {
+            Logger::error("native HDR: retaining graphics owners after completion failure");
+            return;
+        }
+        hdrFrame.reset();
+    }
+#endif
     try
     {
         if (this->nvgContext)
@@ -433,8 +711,65 @@ SDLVideoContext::~SDLVideoContext()
     {
         Logger::error("Cannot delete nvg Context");
     }
+#if defined(PS5_NATIVE_GPU) && defined(BOREALIS_USE_OPENGL)
+    if (this->glContext)
+    {
+#ifdef PS5_NATIVE_GPU
+        glFinish();
+        if (SDL_GL_MakeCurrent(this->window, nullptr) != 0)
+        {
+            // Keep presentation storage owned until native process exit when
+            // detachment fails; deleting an in-use EGL surface is unsafe.
+            Logger::error("ps5 native: GL detach failed during exit: {}", SDL_GetError());
+            this->nvgContext = nullptr;
+            return;
+        }
+#endif
+#ifdef PS5_NATIVE_GPU
+        SDL_ClearError();
+#endif
+        SDL_GL_DeleteContext(this->glContext);
+        this->glContext = nullptr;
+#ifdef PS5_NATIVE_GPU
+        if (*SDL_GetError())
+        {
+            Logger::error("ps5 native: GL context destruction failed: {}", SDL_GetError());
+            this->nvgContext = nullptr;
+            return;
+        }
+#endif
+    }
+#endif
+#ifdef PS5_NATIVE_GPU
+    SDL_ClearError();
+#endif
     SDL_DestroyWindow(this->window);
+#ifdef PS5_NATIVE_GPU
+    this->window = nullptr;
+    this->nvgContext = nullptr;
+#endif
+#ifdef PS5_NATIVE_GPU
+    if (*SDL_GetError())
+    {
+        Logger::error("ps5 native: window destruction failed: {}", SDL_GetError());
+        return;
+    }
+    SDL_ClearError();
+#endif
     SDL_Quit();
+#ifdef PS5_NATIVE_GPU
+    if (*SDL_GetError())
+        Logger::error("ps5 native: SDL shutdown failed: {}", SDL_GetError());
+    else
+        Logger::info("ps5 native: EGL window/context and SDL shutdown completed");
+#ifdef PS5_NATIVE_HDR
+    // Only after complete SDL/EGL teardown; do not switch a live VideoOut.
+    // This resets our runtime state. It does not claim HDMI SDR restoration
+    // inside an HDR-enabled title (the title may retain an HDR carrier in SDR phases).
+    if (!*SDL_GetError() && hdrSelected && ps5ExperimentalSelectHdrScanout(0) == 0)
+        hdrSelected = false;
+#endif
+#endif
 }
 
 NVGcontext* SDLVideoContext::getNVGContext()
@@ -449,6 +784,10 @@ SDL_Window* SDLVideoContext::getSDLWindow()
 
 void SDLVideoContext::fullScreen(bool fs)
 {
+#ifdef PS5_NATIVE_GPU
+    // Fixed scanout is the native window contract; there is no windowed mode.
+    (void)fs;
+#else
 #ifdef __WINRT__
     // win32 会很模糊，而且点击事件貌似也错位了，只给 winrt 使用。
     static unsigned int flag = SDL_WINDOW_FULLSCREEN;
@@ -456,6 +795,8 @@ void SDLVideoContext::fullScreen(bool fs)
     static unsigned int flag = SDL_WINDOW_FULLSCREEN_DESKTOP;
 #endif
     SDL_SetWindowFullscreen(this->window, fs ? flag : 0);
+#endif
 }
+
 
 } // namespace brls

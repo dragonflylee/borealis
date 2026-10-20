@@ -44,7 +44,13 @@ bool DesktopFontLoader::loadFont(const std::string& name, const std::string& pat
         }
     } else
 #endif
+#ifdef PS5_NATIVE_GPU
+    // Native access() rejects some readable package paths. Let the actual font
+    // open/parse operation decide whether this font or its fallback can load.
+    if (Application::loadFontFromFile(name, path)) {
+#else
     if (access(path.c_str(), F_OK) != -1 && Application::loadFontFromFile(name, path)) {
+#endif
         return true;
     }
 

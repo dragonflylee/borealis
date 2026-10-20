@@ -23,6 +23,10 @@
 #include <borealis/views/image.hpp>
 
 #include "borealis/core/cache_helper.hpp"
+#if defined(PS5_NATIVE_GPU)
+#include <exception>
+#include <limits>
+#endif
 #include "borealis/core/thread.hpp"
 
 namespace brls
@@ -174,6 +178,12 @@ Image::Image()
 
 void Image::draw(NVGcontext* vg, float x, float y, float width, float height, Style style, FrameContext* ctx)
 {
+#if defined(PS5_NATIVE_GPU)
+    if (artworkRetryHandler)
+    {
+        artworkRetry.poll([this] { artworkRetryHandler(this, artworkRetryOwner); });
+    }
+#endif
     if (this->texture == 0)
         return;
 
@@ -279,17 +289,23 @@ void Image::invalidateImageBounds()
 
 size_t Image::checkCache(const std::string& path)
 {
+#if !defined(PS5_NATIVE_GPU)
     if (this->texture > 0)
     {
         brls::TextureCache::instance().removeCache(this->texture);
         brls::Logger::verbose("cache remove: {} {}", path, this->texture);
     }
+#endif
 
     int tex = brls::TextureCache::instance().getCache(path);
     if (tex > 0)
     {
+#if defined(PS5_NATIVE_GPU)
+        this->setImageFromCache(tex);
+#else
         brls::Logger::verbose("cache hit: {} {}", path, tex);
         this->innerSetImage(tex);
+#endif
         return tex;
     }
 
@@ -298,17 +314,55 @@ size_t Image::checkCache(const std::string& path)
 
 void Image::setImageFromRes(const std::string& path)
 {
+#if defined(PS5_NATIVE_GPU)
+    artworkRetry.cancel();
+    if (TextureCache::instance().isClosing())
+        return;
+#endif
     // Let TextureCache to manage when to delete texture
     this->setFreeTexture(false);
 
 #ifdef USE_LIBROMFS
+#if defined(PS5_NATIVE_GPU)
+    // Prepare the key before upload so key allocation cannot strand a texture.
+    const std::string key = "@res/" + path;
+    if (checkCache(key) > 0)
+        return;
+    const romfs::Resource* image = nullptr;
+    try
+    {
+        image = &romfs::get(path);
+    }
+    catch (const std::exception&)
+    {
+        Logger::error("Cannot load native image resource");
+        return;
+    }
+    if (image->data() == nullptr || image->size() == 0 || image->size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return;
+    int tex = nvgCreateImageMem(Application::getNVGContext(), 0,
+        const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(image->data())), static_cast<int>(image->size()));
+    if (tex <= 0)
+        return;
+    if (!TextureCache::instance().tryAddCache(key, tex))
+    {
+        nvgDeleteImage(Application::getNVGContext(), tex);
+        return;
+    }
+    this->setImageFromCache(tex);
+#else
     if (checkCache("@res/" + path) > 0)
         return;
     auto image = romfs::get(path);
     this->setImageFromMem((unsigned char*)image.data(), (int)image.size());
     TextureCache::instance().addCache("@res/" + path, this->texture);
+#endif
+#else
+#ifdef PS5_NATIVE_GPU
+    this->setImageFromFile(resourceBase() + path);
 #else
     this->setImageFromFile(std::string(BRLS_RESOURCES) + path);
+#endif
 #endif
 }
 
@@ -327,6 +381,11 @@ int Image::getImageFlags()
 
 void Image::setImageFromFile(const std::string& path)
 {
+#if defined(PS5_NATIVE_GPU)
+    artworkRetry.cancel();
+    if (TextureCache::instance().isClosing())
+        return;
+#endif
     // Let TextureCache to manage when to delete texture
     this->setFreeTexture(false);
 
@@ -339,22 +398,47 @@ void Image::setImageFromFile(const std::string& path)
 
     // Load texture
     int tex = nvgCreateImage(Application::getNVGContext(), path.c_str(), this->getImageFlags());
+#if defined(PS5_NATIVE_GPU)
+    if (tex <= 0)
+        return;
+    if (!TextureCache::instance().tryAddCache(path, tex))
+    {
+        nvgDeleteImage(Application::getNVGContext(), tex);
+        return;
+    }
+    this->setImageFromCache(tex);
+#else
     innerSetImage(tex);
 
     // Save cache
     TextureCache::instance().addCache(path, tex);
+#endif
 }
 
 void Image::setImageFromMem(const unsigned char* data, int size)
 {
+#if defined(PS5_NATIVE_GPU)
+    artworkRetry.cancel();
+    if (data == nullptr || size <= 0 || TextureCache::instance().isClosing())
+        return;
+#endif
     NVGcontext* vg = Application::getNVGContext();
 
     // Load texture
+#if defined(PS5_NATIVE_GPU)
+    // This method creates the allocation itself; raw borrowed-handle policy
+    // must not turn a newly decoded image into an unowned allocation.
+    replaceNativeTexture(nvgCreateImageMem(vg, 0, const_cast<unsigned char*>(data), size), NativeTextureOwnership::OWNED);
+#else
     innerSetImage(nvgCreateImageMem(vg, 0, const_cast<unsigned char*>(data), size));
+#endif
 }
 
 void Image::setImageAsync(std::function<void(std::function<void(const std::string&, size_t length)>)> cb)
 {
+#if defined(PS5_NATIVE_GPU)
+    artworkRetry.cancel();
+#endif
     ASYNC_RETAIN
     cb([ASYNC_TOKEN](const std::string& data, size_t length)
         { brls::sync([ASYNC_TOKEN, data, length]()
@@ -367,6 +451,14 @@ void Image::setImageAsync(std::function<void(std::function<void(const std::strin
 
 void Image::innerSetImage(int tex)
 {
+#if defined(PS5_NATIVE_GPU)
+    artworkRetry.cancel();
+    // Reassigning the current raw handle is idempotent. In particular, a
+    // borrowed alias cannot replace the cached lease that keeps it alive.
+    if (tex > 0 && tex == this->texture)
+        return;
+    replaceNativeTexture(tex, this->freeTexture ? NativeTextureOwnership::OWNED : NativeTextureOwnership::BORROWED);
+#else
     if (tex == 0)
     {
         Logger::error("Cannot set texture: 0");
@@ -388,10 +480,95 @@ void Image::innerSetImage(int tex)
     this->originalImageHeight = (float)height;
 
     this->invalidate();
+#endif
 }
+
+#if defined(PS5_NATIVE_GPU)
+void Image::setImageFromCache(int tex)
+{
+    artworkRetry.cancel();
+    if (TextureCache::instance().isClosing())
+        return;
+    replaceNativeTexture(tex, NativeTextureOwnership::CACHED);
+}
+
+void Image::replaceNativeTexture(int tex, NativeTextureOwnership ownership)
+{
+    if (tex <= 0)
+    {
+        Logger::error("Cannot set native image: invalid texture");
+        return;
+    }
+
+    if (tex == this->texture && ownership == NativeTextureOwnership::CACHED)
+    {
+        // Keep the already validated image. Transfer direct/borrowed ownership
+        // to the incoming cache lease, or balance its extra acquire if cached.
+        if (this->nativeTextureOwnership == NativeTextureOwnership::CACHED)
+            TextureCache::instance().removeCache(tex);
+        this->nativeTextureOwnership = NativeTextureOwnership::CACHED;
+        return;
+    }
+
+    auto vg = Application::getNVGContext();
+    int width = 0, height = 0;
+    nvgImageSize(vg, tex, &width, &height);
+    if (width <= 0 || height <= 0)
+    {
+        // Consume the rejected incoming ownership, retaining the old image.
+        if (ownership == NativeTextureOwnership::CACHED)
+        {
+            // A retained idle entry must not turn every later lookup into
+            // another invalid hit. Unkey it before releasing this acquire.
+            TextureCache::instance().markDirty(tex);
+            TextureCache::instance().removeCache(tex);
+        }
+        else if (ownership == NativeTextureOwnership::OWNED && tex != this->texture)
+            nvgDeleteImage(vg, tex);
+        Logger::error("Cannot set native image: invalid dimensions");
+        return;
+    }
+
+    const int previous = this->texture;
+    const auto previousOwnership = this->nativeTextureOwnership;
+    this->texture = tex;
+    this->nativeTextureOwnership = ownership;
+    this->originalImageWidth = static_cast<float>(width);
+    this->originalImageHeight = static_cast<float>(height);
+
+    if (previous > 0)
+    {
+        if (previousOwnership == NativeTextureOwnership::CACHED)
+            TextureCache::instance().removeCache(previous);
+        else if (previousOwnership == NativeTextureOwnership::OWNED && previous != tex)
+            nvgDeleteImage(vg, previous);
+    }
+    this->invalidate();
+}
+
+void Image::releaseNativeTexture()
+{
+    const int previous = this->texture;
+    const auto ownership = this->nativeTextureOwnership;
+    this->texture = 0;
+    this->nativeTextureOwnership = NativeTextureOwnership::BORROWED;
+    this->originalImageWidth = this->originalImageHeight = 0;
+    if (previous > 0)
+    {
+        if (ownership == NativeTextureOwnership::CACHED)
+            TextureCache::instance().removeCache(previous);
+        else if (ownership == NativeTextureOwnership::OWNED)
+            nvgDeleteImage(Application::getNVGContext(), previous);
+    }
+}
+#endif
 
 void Image::clear()
 {
+#if defined(PS5_NATIVE_GPU)
+    artworkRetry.cancel();
+    releaseNativeTexture();
+#else
     if (this->texture == 0)
         return;
 
@@ -399,6 +576,7 @@ void Image::clear()
         nvgDeleteImage(Application::getNVGContext(), this->texture);
 
     this->texture = 0;
+#endif
 }
 
 void Image::setScalingType(ImageScalingType scalingType)
@@ -440,10 +618,15 @@ float Image::getOriginalImageHeight()
 
 Image::~Image()
 {
+#if defined(PS5_NATIVE_GPU)
+    setArtworkRetryHandler(nullptr, nullptr);
+    releaseNativeTexture();
+#else
     if (this->freeTexture && this->texture != 0)
         nvgDeleteImage(Application::getNVGContext(), this->texture);
     else
         TextureCache::instance().removeCache(this->texture);
+#endif
 }
 
 View* Image::create()

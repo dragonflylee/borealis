@@ -124,9 +124,14 @@ void SDLPlatform::setWindowAlwaysOnTop(bool enable)
 
 void SDLPlatform::setWindowSize(uint32_t windowWidth, uint32_t windowHeight)
 {
+#ifdef PS5_NATIVE_GPU
+    if (windowWidth != 1920 || windowHeight != 1080)
+        Logger::warning("ps5 native: requested window size unsupported; keeping fixed1080");
+#else
     if (windowWidth > 0 && windowHeight > 0) {
         SDL_SetWindowSize(this->videoContext->getSDLWindow(), windowWidth, windowHeight);
     }
+#endif
 }
 
 void SDLPlatform::setWindowSizeLimits(uint32_t windowMinWidth, uint32_t windowMinHeight, uint32_t windowMaxWidth, uint32_t windowMaxHeight)

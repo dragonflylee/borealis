@@ -28,6 +28,13 @@ namespace brls
 
 bool FontLoader::loadFontFromFile(std::string fontName, std::string filePath)
 {
+#ifdef PS5_NATIVE_GPU
+    // The native access preflight can fail even when the font file is readable.
+    const bool loaded = Application::loadFontFromFile(fontName, filePath);
+    if (!loaded)
+        Logger::error("{} font couldn't be opened or parsed", fontName);
+    return loaded;
+#else
     if (access(filePath.c_str(), F_OK) != -1)
     {
         bool loaded = Application::loadFontFromFile(fontName, filePath);
@@ -43,6 +50,7 @@ bool FontLoader::loadFontFromFile(std::string fontName, std::string filePath)
 
     Logger::warning("\"{}\" font couldn't be located (searched at \"{}\")", fontName, filePath);
     return false;
+#endif
 }
 
 bool FontLoader::loadMaterialFromResources()

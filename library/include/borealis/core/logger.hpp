@@ -37,6 +37,10 @@
 #include <mutex>
 #include <string>
 
+#ifdef __PS5__
+#include <borealis/platforms/ps5/log_output.hpp>
+#endif
+
 namespace brls
 {
 
@@ -80,6 +84,11 @@ class Logger
 
     static void setLogOutput(std::FILE *logOut);
 
+#ifdef __PS5__
+    // Configure before worker threads start; ordinary stdout has no limit.
+    static void setLogOutputLimit(size_t remaining) { ps5LogOutput.limit(remaining); }
+#endif
+
     /**
      * If sets to true, each log operation will lock a mutex, making the Logger thread-safe.
      */
@@ -118,6 +127,8 @@ class Logger
             sceClibPrintf("%02d:%02d:%02d.%03d\033%s[%s]\033[0m %s\n", time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec, (int)ms, color.c_str(), prefix.c_str(), log.c_str());
 #elif defined(PS4)
             sceKernelDebugOutText(0, fmt::format("{:02d}:{:02d}:{:02d}.{:03d}\033{}[{}]\033[0m {}\n", lt.hour, lt.minute, lt.second, (int)ms, color, prefix, log).c_str());
+#elif defined(__PS5__)
+            ps5LogOutput.write(logOut, fmt::format("{:%H:%M:%S}.{:03d}\033{}[{}]\033[0m {}\n", time_tm, (int)ms, color, prefix, log));
 #else
             fmt::print(logOut, "{:%H:%M:%S}.{:03d}\033{}[{}]\033[0m {}\n", time_tm, (int)ms, color, prefix, log);
 #endif
@@ -176,6 +187,9 @@ class Logger
     inline static Event<TimePoint, LogLevel, std::string> logEvent;
     inline static std::FILE *logOut = stdout;
     inline static LogLevel logLevel = LogLevel::LOG_INFO;
+#ifdef __PS5__
+    inline static Ps5LogOutput ps5LogOutput;
+#endif
 };
 
 } // namespace brls

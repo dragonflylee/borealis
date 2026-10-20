@@ -178,7 +178,11 @@ struct AppletFrameItem {
 #ifdef USE_LIBROMFS
         iconPath = "@res/" + name;
 #else
+#ifdef PS5_NATIVE_GPU
+        iconPath = resourceBase() + name;
+#else
         iconPath = std::string(BRLS_RESOURCES) + name;
+#endif
 #endif
     }
 
