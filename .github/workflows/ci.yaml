@@ -117,6 +117,34 @@ jobs:
           name: borealis-switch-${{ matrix.ext }}
           path: build/borealis_demo.nro
 
+  switch2:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Install Switch 2 devkit
+        run: |
+          base=https://github.com/ouncebrew
+          for pkg in \
+            libounce/releases/download/20261127/libounce-20261127-1-any.pkg.tar.zst \
+            ouncevk/releases/download/20261123.1/ouncevk-20261123.1-1-any.pkg.tar.zst \
+            kaihen/releases/download/20261127.1/libkaihen-20261127.1-1-any.pkg.tar.zst; do
+            dkp-pacman -U --noconfirm "${base}/${pkg}"
+          done
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPLATFORM_SWITCH2=ON
+          cmake --build build --target borealis_demo.nro -j"$(nproc)"
+      - name: Upload dist
+        uses: actions/upload-artifact@v7
+        with:
+          name: borealis-switch2
+          path: build/borealis_demo.nro
+
   android:
     runs-on: ubuntu-latest
     steps:

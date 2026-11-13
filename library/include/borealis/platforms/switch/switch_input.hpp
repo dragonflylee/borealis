@@ -20,12 +20,21 @@
 #include <switch.h>
 #include <unordered_map>
 
+#include <atomic>
+#include <thread>
 #include <borealis/core/input.hpp>
+#include <borealis/platforms/switch/switch_mouse.hpp>
 
 #define TOUCHES_MAX 10
 
 namespace brls
 {
+
+enum class ButtonOverrideMode {
+    NONE,
+    CUSTOM_EVENT,
+    GUIDE_BUTTON
+};
 
 // InputManager that uses the hid sysmodule to get inputs
 class SwitchInputManager : public InputManager
@@ -57,8 +66,69 @@ class SwitchInputManager : public InputManager
     void sendRumbleRaw(float lowFreq, float highFreq, float lowAmp, float highAmp);
 
     void clearVibration(int controller);
+#ifdef __SWITCH2__
+    void setJoyConMouseCursorSpeed(float speed) { this->mouse.setCursorSpeed(speed); }
+    void setMouseScrollSensitivity(float sensitivity)
+    {
+        this->menuScrollSensitivity = std::isfinite(sensitivity) ? std::clamp(sensitivity, 0.1f, 2.0f) : 1.0f;
+    }
+#endif
+
+    /*
+     * It will not report about screenshot button state, if screenshotButtonOverrideMode equals NONE
+     */
+    bool isScreenshotButtonPressed() { return m_screenshotButtonMode != ButtonOverrideMode::NONE && m_isScreenshotPressed; }
+
+    /*
+     * It will not report about home button state, if homeButtonOverrideMode equals NONE
+     */
+    bool isHomeButtonPressed() { return m_homeButtonMode != ButtonOverrideMode::NONE && m_isHomePressed; }
+
+    ButtonOverrideMode screenshotButtonOverrideMode() { return m_screenshotButtonMode; }
+    void setScreenshotButtonOverrideMode(ButtonOverrideMode value)
+    {
+        m_screenshotButtonMode = value;
+        if (value == ButtonOverrideMode::NONE)
+            m_isScreenshotPressed = false;
+    }
+
+    ButtonOverrideMode homeButtonOverrideMode() { return m_homeButtonMode; }
+    void setHomeButtonOverrideMode(ButtonOverrideMode value)
+    {
+        m_homeButtonMode = value;
+        if (value == ButtonOverrideMode::NONE)
+            m_isHomePressed = false;
+    }
+
+#ifdef __SWITCH2__
+    bool isChatButtonPressed() { return m_chatButtonMode != ButtonOverrideMode::NONE && m_isChatPressed; }
+    ButtonOverrideMode chatButtonOverrideMode() { return m_chatButtonMode; }
+    void setChatButtonOverrideMode(ButtonOverrideMode value)
+    {
+        m_chatButtonMode = value;
+        if (value == ButtonOverrideMode::NONE)
+            m_isChatPressed = false;
+    }
+#endif
 
   private:
+    void system_button_thread_fn();
+    void processSystemButtonEvent(::Event* event, int button);
+    std::array<std::atomic<int>, 3> systemButtonOwners = { -1, -1, -1 };
+    std::thread system_button_thread;
+    std::atomic<bool> system_button_stop = false;
+
+    std::atomic<ButtonOverrideMode> m_screenshotButtonMode = ButtonOverrideMode::NONE;
+    std::atomic<ButtonOverrideMode> m_homeButtonMode       = ButtonOverrideMode::NONE;
+
+  private:
+    std::atomic<bool> m_isScreenshotPressed = false;
+    std::atomic<bool> m_isHomePressed       = false;
+#ifdef __SWITCH2__
+    std::atomic<ButtonOverrideMode> m_chatButtonMode = ButtonOverrideMode::NONE;
+    std::atomic<bool> m_isChatPressed                = false;
+#endif
+
     bool cursorInited = false;
     int cursorWidth, cursorHeight;
     int cursorTexture = 0;
@@ -72,7 +142,13 @@ class SwitchInputManager : public InputManager
     HidVibrationValue m_vibration_values[GAMEPADS_MAX][2];
     u32 padsStyleSet[GAMEPADS_MAX];
     bool pointerLocked = false;
-    HidMouseState currentMouseState;
+    SwitchMouse mouse;
+    SwitchMouseState currentMouseState = { };
+#ifdef __SWITCH2__
+    float menuScrollSensitivity = 1.0f;
+    bool joyConMotionLogged = false;
+    bool joyConScrollLogged = false;
+#endif
     HidSixAxisSensorHandle m_six_axis_sensor_handle[4]; // All for player 1, player 2 not supported
 
     std::vector<bool> m_hid_keyboard_state;

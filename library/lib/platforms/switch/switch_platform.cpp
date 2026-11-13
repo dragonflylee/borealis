@@ -116,6 +116,8 @@ void SwitchPlatform::createWindow(std::string windowTitle, uint32_t windowWidth,
 {
 #ifdef BOREALIS_USE_DEKO3D
     this->videoContext = new SwitchVideoContext();
+#elif defined(__SWITCH2__)
+    this->videoContext = new Switch2VideoContext(windowTitle, windowWidth, windowHeight, 0, 0);
 #elif defined(__SDL2__)
     this->videoContext = new SDLVideoContext(windowTitle, windowWidth, windowHeight, 0, 0);
 #else
@@ -247,11 +249,17 @@ void SwitchPlatform::openBrowser(std::string url)
 
 std::string SwitchPlatform::getName()
 {
+#ifdef __SWITCH2__
+    return "Switch 2";
+#else
     return "Switch";
+#endif
 }
 
 bool SwitchPlatform::mainLoopIteration()
 {
+    // Switch 2 has no SDL/GLFW event source of its own: input is polled from
+    // HID by SwitchInputManager, so the applet loop only decides when to exit.
     return appletMainLoop();
 }
 
