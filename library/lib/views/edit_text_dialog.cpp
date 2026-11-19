@@ -1,7 +1,7 @@
 #include <borealis/views/edit_text_dialog.hpp>
 #include <borealis/core/i18n.hpp>
+#include <borealis/core/thread.hpp>
 #include <borealis/core/touch/tap_gesture.hpp>
-#include <borealis/views/button.hpp>
 #include <borealis/core/application.hpp>
 #include <libretro-common/encodings/utf.h>
 
@@ -17,6 +17,19 @@
 
 namespace brls
 {
+
+// Margin around each key of the on-screen keyboard
+static constexpr float KEY_MARGIN = 2.0f;
+
+// A regular key has no role and emits its text
+enum KeyRole
+{
+    KEY_TEXT = 0,
+    KEY_BACKSPACE,
+    KEY_SHIFT,
+    KEY_SYMBOLS,
+    KEY_COMMIT,
+};
 
 const std::string editTextDialogXML = R"xml(
     <brls:Box
@@ -78,13 +91,12 @@ const std::string editTextDialogXML = R"xml(
                 height="auto"/>
         </brls:Box>
 
-        <brls:Padding />
-
         <brls:Box
             id="brls/dialog/keyboard"
-            grow="1"
+            width="auto"
             axis="column"
-            marginBottom="30"
+            marginTop="16"
+            marginBottom="24"
             alignItems="center">
         </brls:Box>
 
@@ -168,20 +180,20 @@ EditTextDialog::EditTextDialog()
 
     this->init = true;
 
-#if defined(TRIMUI)
+    // toggle the case of the on-screen keyboard
     this->registerAction("Shift", BUTTON_Y, [this](...)
     {
-        if (keyboardMode == KeyboardMode::LOWERCASE) {
-            keyboardMode = KeyboardMode::UPPERCASE;
-        } else {
-            keyboardMode = KeyboardMode::LOWERCASE;
-        }
-        this->buildKeyboard();
-        return true; 
-    }, true, true);
+        this->pressKey(KEY_SHIFT);
+        return true; }, true, true);
 
-    this->buildKeyboard();
-#endif
+    // delete the previous char, BUTTON_BACK is unreachable on many gamepads
+    this->registerAction("hints/delete"_i18n, BUTTON_X, [this](...)
+        {
+            this->backspaceEvent.fire();
+            return true; }, true, true);
+
+    // The on-screen keyboard is shown when a gamepad is the input device
+    this->setKeyboardEnabled(Application::getInputType() != InputType::TOUCH);
 }
 
 EditTextDialog::~EditTextDialog() = default;
@@ -309,48 +321,229 @@ void EditTextDialog::setPasswordStyle(bool value)
     }
 }
 
-static void addKey(const std::string& text, Box* row, int width, const ActionListener& actionListener)
+void EditTextDialog::setKeyboardEnabled(bool enabled)
 {
-    Button* key = new Button();
-    key->setWidth(width);
-    key->setHeight(65);
-    key->setMargins(2, 2, 2, 2);
-    key->setText(text);
-    key->setFontSize(25);
-    key->registerClickAction(actionListener);
-    row->addView(key);
+    this->keyboardShown = enabled;
+    this->keyboard->setVisibility(enabled ? Visibility::VISIBLE : Visibility::GONE);
+    this->buildKeyboard();
+}
+
+void EditTextDialog::pressKey(int role)
+{
+    switch (role)
+    {
+        case KEY_BACKSPACE:
+            this->backspaceEvent.fire();
+            break;
+        case KEY_SHIFT:
+            this->keyboardMode = this->keyboardMode == KeyboardMode::UPPERCASE ? KeyboardMode::LOWERCASE
+                                                                             : KeyboardMode::UPPERCASE;
+            this->rebuildKeyboard();
+            break;
+        case KEY_SYMBOLS:
+            this->keyboardMode = this->keyboardMode == KeyboardMode::SYMBOLS ? KeyboardMode::LOWERCASE
+                                                                            : KeyboardMode::SYMBOLS;
+            this->rebuildKeyboard();
+            break;
+        case KEY_COMMIT:
+            Application::popActivity(EDIT_TEXT_DIALOG_POP_ANIMATION, [this](){
+                    this->summitEvent.fire();
+                });
+            break;
+        default:
+            break;
+    }
+}
+
+void EditTextDialog::rebuildKeyboard()
+{
+    // The framework still uses the clicked key after the action returns
+    brls::sync([this]()
+        { this->buildKeyboard(); });
 }
 
 void EditTextDialog::buildKeyboard()
 {
-    auto addLetter = [this](const std::string& letter, Box* row) {
-        addKey(letter, row, 100, [this](brls::View* view)
+    View* focused = Application::getCurrentFocus();
+
+    // Remember where the focus is, the keys are freed below
+    int focusRow = -1, focusCol = -1;
+    std::vector<View*>& rows = this->keyboard->getChildren();
+    for (size_t r = 0; r < rows.size() && focusRow < 0; r++)
+    {
+        std::vector<View*>& keys = ((Box*)rows[r])->getChildren();
+        for (size_t c = 0; c < keys.size(); c++)
         {
-            Button* key = dynamic_cast<Button*>(view);
-            this->clipboardEvent.fire(key->getText());
-            return true; 
-        });
+            if (keys[c] == focused)
+            {
+                focusRow = (int)r;
+                focusCol = (int)c;
+                break;
+            }
+        }
+    }
+
+    this->keyboard->clearViews();
+
+    if (!this->keyboardShown)
+    {
+        Application::giveFocus(this->applet);
+        return;
+    }
+
+    bool symbols = this->keyboardMode == KeyboardMode::SYMBOLS;
+    bool upper   = this->keyboardMode == KeyboardMode::UPPERCASE;
+
+    struct Key
+    {
+        std::string label;
+        float units;
+        int role;
+        bool highlight;
+    };
+    using Row = std::vector<Key>;
+
+    auto letters = [upper](const std::string& keys) -> Row
+    {
+        Row row;
+        for (char c : keys)
+        {
+            if (upper)
+                c = (char)std::toupper((unsigned char)c);
+            row.push_back({ std::string(1, c), 1.0f, KEY_TEXT, false });
+        }
+        return row;
     };
 
-    keyboard->clearViews(false);
+    std::vector<Row> layout;
+    if (symbols)
+    {
+        layout = { letters("1234567890"), letters("@#$%&*-+()"), letters("!\"':;,/?=_") };
+    }
+    else
+    {
+        layout = { letters("qwertyuiop"), letters("asdfghjkl;"), letters("zxcvbnm,./") };
+    }
 
-    auto rows = (keyboardMode == KeyboardMode::UPPERCASE)
-        ? std::vector<std::initializer_list<std::string>>{
-              {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
-              {"Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"},
-              {"A", "S", "D", "F", "G", "H", "J", "K", "L", ";"},
-              {"Z", "X", "C", "V", "B", "N", "M", ",", "_", "\\"}}
-        : std::vector<std::initializer_list<std::string>>{
-              {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
-              {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"},
-              {"a", "s", "d", "f", "g", "h", "j", "k", "l", ":"},
-              {"z", "x", "c", "v", "b", "n", "m", ".", "-", "/"}};
+    layout.push_back({
+        { symbols ? "ABC" : "?123", 1.5f, KEY_SYMBOLS, symbols },
+        { " ", 4.0f, KEY_TEXT, false },
+        { "\uE0E1", 1.5f, KEY_BACKSPACE, false },
+        { "\uE0E3", 1.5f, KEY_SHIFT, upper },
+        { "OK", 2.5f, KEY_COMMIT, true },
+    });
 
-    for (const auto& line : rows) {
-        Box* row = new Box();
-        for (auto& letter : line)
-            addLetter(letter, row);
-        this->keyboard->addView(row);
+    // Size a key unit so that the widest row fits the window
+    float widest = 0;
+    for (auto& row : layout)
+    {
+        float units = 0;
+        for (auto& key : row)
+            units += key.units;
+        widest = std::max(widest, units);
+    }
+    float available = Application::contentWidth > 0 ? Application::contentWidth : Application::ORIGINAL_WINDOW_WIDTH;
+    int unit        = (int)(available * 0.94f / widest) - KEY_MARGIN * 2;
+    unit            = std::min(std::max(unit, 24), 100);
+    int keyHeight   = std::max(unit * 65 / 100, 26);
+    int fontSize    = std::max(unit * 25 / 100, 13);
+
+    Theme theme = Application::getTheme();
+
+    // A key with the KEY_TEXT role emits its label as text
+    auto addKey = [this, &theme, unit, keyHeight, fontSize](Box* row, const std::string& text,
+        float units, int role, bool highlight)
+    {
+        Box* key = new Box();
+        key->setWidth(unit * units);
+        key->setHeight(keyHeight);
+        key->setMargins(KEY_MARGIN, KEY_MARGIN, KEY_MARGIN, KEY_MARGIN);
+        key->setCornerRadius(keyHeight / 4.0f);
+        key->setFocusable(true);
+        key->setAxis(Axis::ROW);
+        key->setJustifyContent(JustifyContent::CENTER);
+        key->setAlignItems(AlignItems::CENTER);
+        row->addView(key);
+
+        Label* keyLabel = new Label();
+        keyLabel->setText(text);
+        keyLabel->setFontSize(fontSize);
+        keyLabel->setHorizontalAlign(HorizontalAlign::CENTER);
+        key->addView(keyLabel);
+
+        if (highlight)
+        {
+            key->setBackgroundColor(theme["brls/button/primary_enabled_background"]);
+            keyLabel->setTextColor(theme["brls/button/primary_enabled_text"]);
+        }
+        else
+        {
+            key->setBackgroundColor(theme["brls/button/default_enabled_background"]);
+            keyLabel->setTextColor(theme["brls/button/default_enabled_text"]);
+        }
+
+        // The tap recognizer reuses the click action of the key
+        key->registerClickAction([this, text, role](View*)
+            {
+                if (role == KEY_TEXT)
+                    this->clipboardEvent.fire(text);
+                else
+                    this->pressKey(role);
+                return true; });
+        key->addGestureRecognizer(new TapGestureRecognizer(key));
+
+        return key;
+    };
+
+    std::vector<std::vector<View*>> grid;
+    for (auto& row : layout)
+    {
+        Box* rowBox = new Box(Axis::ROW);
+        rowBox->setFocusable(false);
+        rowBox->setJustifyContent(JustifyContent::CENTER);
+        this->keyboard->addView(rowBox);
+
+        std::vector<View*> built;
+        for (auto& key : row)
+            built.push_back(addKey(rowBox, key.label, key.units, key.role, key.highlight));
+        grid.push_back(built);
+    }
+
+    // Wrap horizontally instead of leaving the keyboard
+    for (auto& row : grid)
+    {
+        if (row.size() < 2)
+            continue;
+        row.back()->setCustomNavigationRoute(FocusDirection::RIGHT, row.front());
+        row.front()->setCustomNavigationRoute(FocusDirection::LEFT, row.back());
+    }
+
+    // Go up and down by proportional position to keep the columns aligned
+    auto nearest = [](size_t c, size_t from, size_t to) -> size_t {
+        if (from <= 1 || to == 0)
+            return 0;
+        return std::min(to - 1, (size_t)((double)c / (from - 1) * (to - 1) + 0.5));
+    };
+    for (size_t r = 0; r + 1 < grid.size(); r++)
+    {
+        for (size_t c = 0; c < grid[r].size(); c++)
+            grid[r][c]->setCustomNavigationRoute(FocusDirection::DOWN,
+                grid[r + 1][nearest(c, grid[r].size(), grid[r + 1].size())]);
+        for (size_t c = 0; c < grid[r + 1].size(); c++)
+            grid[r + 1][c]->setCustomNavigationRoute(FocusDirection::UP,
+                grid[r][nearest(c, grid[r + 1].size(), grid[r].size())]);
+    }
+
+    // The text is right above the keyboard
+    for (View* key : grid.front())
+        key->setCustomNavigationRoute(FocusDirection::UP, this->applet);
+    this->applet->setCustomNavigationRoute(FocusDirection::DOWN, grid.front().front());
+
+    if (focusRow >= 0 && !grid.empty())
+    {
+        size_t r = std::min((size_t)focusRow, grid.size() - 1);
+        size_t c = std::min((size_t)focusCol, grid[r].size() - 1);
+        Application::giveFocus(grid[r][c]);
     }
 }
 

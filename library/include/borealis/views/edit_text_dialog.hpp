@@ -17,6 +17,7 @@ class EditTextDialog : public Box
     void setCountText(const std::string& value);
     void setCursor(int cursor);
     void setPasswordStyle(bool value);
+    void setKeyboardEnabled(bool enabled);
     bool isTranslucent() override;
     void onLayout() override;
     brls::Box *getApplet();
@@ -42,9 +43,12 @@ class EditTextDialog : public Box
     ActionIdentifier passwordEvent;
     bool passwordStyle = false;
     bool init = false;
+    bool keyboardShown = false;
 
     KeyboardMode keyboardMode = KeyboardMode::LOWERCASE;
     void buildKeyboard();
+    void rebuildKeyboard();
+    void pressKey(int role);
 
     BRLS_BIND(brls::Label, header, "brls/dialog/header");
     BRLS_BIND(brls::Label, label, "brls/dialog/label");
