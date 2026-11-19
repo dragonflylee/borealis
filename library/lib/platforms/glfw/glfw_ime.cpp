@@ -164,6 +164,7 @@ void GLFWImeManager::openInputDialog(std::function<void(std::string)> cb, std::s
     }
 #endif
     preeditTextBuffer.clear();
+    glfwSetTextInputFocus(window, isPassword ? GLFW_FALSE : GLFW_TRUE);
     glfwSetInputMode(window, GLFW_IME, isPassword ? GLFW_FALSE : GLFW_TRUE);
     showIME     = true;
     textBuffer  = std::wstring_convert<std::codecvt_utf8<wchar_t>>().from_bytes(initialText);

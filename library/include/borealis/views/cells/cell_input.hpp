@@ -75,9 +75,9 @@ class InputCell : public DetailCell
     std::string value;
     std::string hint;
     std::string placeholder;
-    InputCellType type;
-    int maxInputLength;
-    int kbdDisableBitmask;
+    InputCellType type = InputCellType::TEXT;
+    int maxInputLength = 32;
+    int kbdDisableBitmask = 0;
 
     Event<std::string> event;
     void updateUI();
