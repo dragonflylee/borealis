@@ -31,4 +31,15 @@ bool startsWith(const std::string& data, const std::string& prefix);
 
 std::string loadFileContents(const std::string& path);
 
+/**
+ * Byte offset of a codepoint index inside a UTF-8 string. Indices are clamped to
+ * [0, codepoint count], so the result is always a valid insertion point.
+ */
+size_t utf8ByteOffset(const std::string& text, int codepoints);
+
+/**
+ * One mask glyph per codepoint, used for password fields.
+ */
+std::string maskCodepoints(const std::string& text);
+
 } // namespace brls

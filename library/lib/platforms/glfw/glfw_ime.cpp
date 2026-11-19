@@ -77,11 +77,19 @@ void GLFWImeManager::preedit_callback(GLFWwindow* window, int preeditCount,
     unsigned int* preeditString, int blockCount,
     int* blockSizes, int focusedBlock, int caret)
 {
+    // Every early return must dispatch an empty preview, or the caller keeps rendering
+    // a stale preedit buffer.
+    auto dispatchInlineCompose = [](const std::string& preview) {
+        if (inlineActive && inlineOnCompose)
+            inlineOnCompose(preview);
+    };
+
     int blockIndex = -1, remainingBlockSize = 0;
     if (preeditCount == 0 || blockCount == 0)
     {
         strcpy(preeditBuf, "(empty)");
         preeditTextBuffer = "";
+        dispatchInlineCompose("");
         return;
     }
 
@@ -130,10 +138,24 @@ void GLFWImeManager::preedit_callback(GLFWwindow* window, int preeditCount,
     }
 
     preeditTextBuffer = std::string { preeditBuf };
+
+    std::string preview;
+    for (char c : preeditTextBuffer)
+        if (c != '[' && c != ']')
+            preview += c;
+    dispatchInlineCompose(preview);
 }
 
 void GLFWImeManager::char_callback(GLFWwindow* window, unsigned int codepoint)
 {
+    if (inlineActive)
+    {
+        char encoded[5]      = "";
+        size_t encodedLength = encode_utf8(encoded, codepoint);
+        if (inlineOnText)
+            inlineOnText(std::string(encoded, encodedLength));
+        return;
+    }
     if (!showIME)
         return;
     if (cursor < 0 || cursor > (int)textBuffer.size())
@@ -293,6 +315,42 @@ void GLFWImeManager::openInputDialog(std::function<void(std::string)> cb, std::s
 std::string GLFWImeManager::getInputText()
 {
     return std::wstring_convert<std::codecvt_utf8<wchar_t>>().to_bytes(textBuffer);
+}
+
+void GLFWImeManager::stopInlineEditing()
+{
+    if (!inlineActive)
+        return;
+    inlineActive = false;
+    inlineOnText    = nullptr;
+    inlineOnCompose = nullptr;
+    glfwSetTextInputFocus(window, GLFW_FALSE);
+    glfwSetInputMode(window, GLFW_IME, GLFW_FALSE);
+}
+
+bool GLFWImeManager::supportsInlineEditing()
+{
+    return true;
+}
+
+void GLFWImeManager::startInlineEditing(std::function<void(const std::string&)> onText,
+    std::function<void(const std::string&)> onCompose, bool disableIme)
+{
+    inlineOnText    = std::move(onText);
+    inlineOnCompose = std::move(onCompose);
+    inlineActive    = true;
+    // GLFW_IME only sets ImmSetOpenStatus, which Shift can undo; clearing text-input
+    // focus detaches the IME context instead.
+    glfwSetTextInputFocus(window, disableIme ? GLFW_FALSE : GLFW_TRUE);
+    glfwSetInputMode(window, GLFW_IME, disableIme ? GLFW_FALSE : GLFW_TRUE);
+}
+
+void GLFWImeManager::setInlineEditingRect(float x, float y, float width, float height)
+{
+    if (!inlineActive)
+        return;
+    glfwSetPreeditCursorRectangle(window, (int)x, (int)y,
+        width > 1 ? (int)width : 1, height > 1 ? (int)height : 1);
 }
 
 bool GLFWImeManager::openForText(std::function<void(std::string)> f, std::string headerText,

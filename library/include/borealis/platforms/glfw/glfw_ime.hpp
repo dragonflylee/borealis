@@ -45,6 +45,15 @@ class GLFWImeManager : public ImeManager
         std::string subText, size_t maxStringLength = 50, std::string initialText = "",
         bool isPassword = false);
 
+    bool supportsInlineEditing() override;
+
+    void startInlineEditing(std::function<void(const std::string&)> onText,
+        std::function<void(const std::string&)> onCompose = nullptr, bool disableIme = false) override;
+
+    void setInlineEditingRect(float x, float y, float width, float height) override;
+
+    void stopInlineEditing() override;
+
   private:
     GLFWwindow* window;
     inline static bool showIME;
@@ -52,6 +61,11 @@ class GLFWImeManager : public ImeManager
     inline static std::string preeditTextBuffer;
     inline static int cursor{};
     inline static bool isEditing{};
+
+    inline static bool inlineActive{};
+    inline static std::function<void(const std::string&)> inlineOnText;
+    inline static std::function<void(const std::string&)> inlineOnCompose;
+
     static void ime_callback(GLFWwindow* window);
     static void preedit_callback(GLFWwindow* window, int preeditCount, unsigned int* preeditString,
         int blockCount, int* blockSizes, int focusedBlock, int caret);

@@ -15,6 +15,7 @@
 */
 
 #include <borealis/core/util.hpp>
+#include <libretro-common/encodings/utf.h>
 #include <fstream>
 
 #ifdef __PSV__
@@ -32,6 +33,24 @@ bool endsWith(const std::string& data, const std::string& suffix)
 bool startsWith(const std::string& data, const std::string& prefix)
 {
     return data.rfind(prefix, 0) == 0;
+}
+
+size_t utf8ByteOffset(const std::string& text, int codepoints)
+{
+    if (codepoints <= 0)
+        return 0;
+    // utf8skip() doesn't stop at '\0', so clamp before walking.
+    if (codepoints > (int)utf8len(text.c_str()))
+        return text.size();
+    return (size_t)(utf8skip(text.c_str(), (size_t)codepoints) - text.c_str());
+}
+
+std::string maskCodepoints(const std::string& text)
+{
+    std::string masked;
+    for (size_t i = 0; i < utf8len(text.c_str()); i++)
+        masked += "●";
+    return masked;
 }
 
 [[noreturn]] void fatal(std::string message)

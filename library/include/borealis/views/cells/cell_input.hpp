@@ -37,6 +37,7 @@ class InputCell : public DetailCell
 {
   public:
     InputCell();
+    ~InputCell() override;
 
     void init(std::string title, std::string value, Event<std::string>::Callback callback = [](std::string text){}, std::string placeholder = "", std::string hint = "", int maxInputLength = 32, int kbdDisableBitmask = 0);
 
@@ -69,6 +70,8 @@ class InputCell : public DetailCell
         return &event;
     }
 
+    void onFocusLost() override;
+
     static View* create();
 
   private:
@@ -81,6 +84,25 @@ class InputCell : public DetailCell
 
     Event<std::string> event;
     void updateUI();
+
+    bool inlineEditing = false;
+    bool inlineShowPlain = false;
+    std::string editBuffer;
+    int editCursor = 0;
+    std::string composeBuffer;
+    std::vector<ActionIdentifier> inlineActions;
+    // Keeps deferred work (brls::sync / brls::delay) from touching a destroyed cell.
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+
+    void beginInlineEdit();
+    void endInlineEdit(bool commit);
+    void renderInline();
+    void refreshInlineActions();
+    void updateCaretRectangle();
+
+    void inlineInsert(const std::string& text);
+    void inlineBackspace();
+    void inlineMoveCursor(int delta);
 };
 
 class InputNumericCell : public DetailCell

@@ -3,6 +3,7 @@
 #include <borealis/core/thread.hpp>
 #include <borealis/core/touch/tap_gesture.hpp>
 #include <borealis/core/application.hpp>
+#include <borealis/core/util.hpp>
 #include <libretro-common/encodings/utf.h>
 
 #ifdef __PSV__
@@ -271,11 +272,8 @@ namespace brls
         }
         else if (this->passwordStyle)
         {
-            std::string filled;
-            size_t len = utf8len(this->content.c_str());
-            for (size_t i = 0; i < len; i++) filled += "●";
             label->setTextColor(Application::getTheme().getColor("brls/text"));
-            label->setText(filled);
+            label->setText(maskCodepoints(this->content));
         }
         else
         {

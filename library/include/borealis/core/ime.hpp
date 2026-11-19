@@ -56,6 +56,38 @@ class ImeManager
         std::string leftButton = "", std::string rightButton = "",
         int kbdDisableBitmask = KeyboardKeyDisableBitmask::KEYBOARD_DISABLE_NONE)
         = 0;
+
+    /**
+     * Desktop (GLFW/SDL) only: text can be edited in place without a dialog.
+     */
+    virtual bool supportsInlineEditing()
+    {
+        return false;
+    }
+
+    /**
+     * onText receives committed UTF-8 fragments, onCompose the live preview (empty when
+     * composition ends). Committing or cancelling is the caller's job. disableIme keeps
+     * composition away from the IME, for password-like input.
+     */
+    virtual void startInlineEditing(std::function<void(const std::string&)> onText,
+        std::function<void(const std::string&)> onCompose = nullptr, bool disableIme = false)
+    {
+    }
+
+    /**
+     * Caret area in scaled window coordinates, used to place the IME candidate window.
+     */
+    virtual void setInlineEditingRect(float x, float y, float width, float height)
+    {
+    }
+
+    /**
+     * End the session started by startInlineEditing().
+     */
+    virtual void stopInlineEditing()
+    {
+    }
 };
 
 };

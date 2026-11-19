@@ -42,11 +42,26 @@ class SDLImeManager : public ImeManager
     void openInputDialog(std::function<void(std::string)> cb, std::string headerText,
         std::string subText, size_t maxStringLength = 50, std::string initialText = "",
         bool isPassword = false);
+
+    bool supportsInlineEditing() override;
+
+    void startInlineEditing(std::function<void(const std::string&)> onText,
+        std::function<void(const std::string&)> onCompose = nullptr, bool disableIme = false) override;
+
+    void setInlineEditingRect(float x, float y, float width, float height) override;
+
+    void stopInlineEditing() override;
+
   private:
     Event<SDL_Event*> *event;
     int cursor;
     std::string inputBuffer;
     bool isEditing = false; // 是否正在编辑文字
     std::string editingBuffer;
+    bool inlineActive = false;
+    bool inlineDisableIme = false;
+    std::function<void(const std::string&)> inlineOnText;
+    std::function<void(const std::string&)> inlineOnCompose;
+    Event<SDL_Event*>::Subscription inlineSubscription = {};
 };
 }
