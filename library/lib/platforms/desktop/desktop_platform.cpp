@@ -53,9 +53,15 @@ using winrt::Windows::UI::ViewManagement::UIColorType;
 using winrt::Windows::UI::ViewManagement::UISettings;
 #endif
 
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__) || defined(__linux__) || defined(PS5)
 #include <arpa/inet.h>
 #include <ifaddrs.h>
+#ifdef PS5
+// FreeBSD's <ifaddrs.h> does not pull these in the way glibc does.
+#include <net/if.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 #endif
 
 
@@ -734,7 +740,7 @@ std::string DesktopPlatform::getIpAddress()
     std::string ipaddr = "-";
 #if defined(ANDROID)
 #elif defined(IOS) || defined(TVOS)
-#elif defined(__APPLE__) || defined(__linux__)
+#elif defined(__APPLE__) || defined(__linux__) || defined(PS5)
     struct ifaddrs* interfaces = nullptr;
     if (getifaddrs(&interfaces) == 0)
     {
@@ -743,6 +749,11 @@ std::string DesktopPlatform::getIpAddress()
             if (!addr->ifa_addr) continue;
             if (addr->ifa_addr->sa_family == AF_INET)
             {
+#ifdef PS5
+                // Skip loopback: the PS5 always has lo0 and it would otherwise
+                // win, since this loop keeps the last match.
+                if (addr->ifa_flags & IFF_LOOPBACK) continue;
+#endif
                 ipaddr = inet_ntoa(reinterpret_cast<struct sockaddr_in*>(addr->ifa_addr)->sin_addr);
             }
         }

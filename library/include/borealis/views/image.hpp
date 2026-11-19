@@ -19,6 +19,9 @@
 #pragma once
 
 #include <borealis/core/view.hpp>
+#if defined(PS5_NATIVE_GPU)
+#include <borealis/core/artwork_retry.hpp>
+#endif
 
 namespace brls
 {
@@ -107,6 +110,26 @@ class Image : public View
 
     virtual void innerSetImage(int texture);
 
+#if defined(PS5_NATIVE_GPU)
+    /**
+     * Consumes one reference already acquired by TextureCache::getCache or a
+     * successful TextureCache::tryAddCache.
+     * A failed replacement leaves the previous image intact and releases the
+     * incoming reference. Call on the UI thread, like the other image setters.
+     */
+    void setImageFromCache(int texture);
+
+    // The owner outlives this child and unsets its hook before teardown. The
+    // callback synchronously reconstructs artwork from its current model.
+    using ArtworkRetryHandler = void (*)(Image*, void*);
+    void setArtworkRetryHandler(ArtworkRetryHandler callback, void* owner) noexcept {
+        artworkRetry.cancel();
+        artworkRetryHandler = callback;
+        artworkRetryOwner = owner;
+    }
+    ArtworkRetry& artworkAdmission() noexcept { return artworkRetry; }
+#endif
+
     void setImageAsync(std::function<void(std::function<void(const std::string&, size_t length)>)> cb);
 
     void clear();
@@ -131,6 +154,9 @@ class Image : public View
 
     /**
      * Whether to destroy the current texture before updating the image texture
+     * Native: selects owned (true) or borrowed (false) for the next different
+     * raw handle passed to innerSetImage. Existing ownership is unchanged.
+     * File/resource/cache and memory-created images use their explicit owner.
      */
     void setFreeTexture(bool value);
     bool getFreeTexture();
@@ -163,6 +189,22 @@ class Image : public View
     float imageWidth  = 0;
 
     bool freeTexture = true;
+
+#if defined(PS5_NATIVE_GPU)
+    // freeTexture selects ownership for the next raw innerSetImage assignment;
+    // changing it never changes ownership of the image already being displayed.
+    enum class NativeTextureOwnership { BORROWED, OWNED, CACHED };
+    NativeTextureOwnership nativeTextureOwnership = NativeTextureOwnership::BORROWED;
+    void replaceNativeTexture(int texture, NativeTextureOwnership ownership);
+    void releaseNativeTexture();
+#endif
+
+private:
+#if defined(PS5_NATIVE_GPU)
+    ArtworkRetry artworkRetry;
+    ArtworkRetryHandler artworkRetryHandler = nullptr;
+    void* artworkRetryOwner = nullptr;
+#endif
 };
 
 } // namespace brls

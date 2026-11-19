@@ -19,6 +19,9 @@ limitations under the License.
 #include <borealis/core/event.hpp>
 #include <borealis/views/edit_text_dialog.hpp>
 #include <borealis/core/application.hpp>
+#ifdef PS5_NATIVE_GPU
+#include <borealis/platforms/ps5/native_ime_diagnostics.hpp>
+#endif
 
 #ifdef __PSV__
 extern "C" uint8_t * vita_ime_init_text;
@@ -33,6 +36,22 @@ __attribute__((weak)) uint32_t vita_ime_type = 0;
 
 namespace brls
 {
+#ifdef PS5_NATIVE_GPU
+    static void nativeImeCompletion(std::uint64_t request, ps5_native_ime::Stage stage)
+    {
+        ps5_native_ime::Event observation;
+        observation.request_id = request;
+        observation.stage = stage;
+        observation.error = ps5_native_ime::classify_error(SDL_GetError());
+        observation.focus = SDL_GetKeyboardFocus() != nullptr;
+        observation.text_events_active = SDL_IsTextInputActive() == SDL_TRUE;
+        // Do not add an IsShown call here: it invokes the native provider and
+        // can overwrite the result of Stop. Wrapper completion is not proof
+        // that native cleanup succeeded, nor proof of physical input origin.
+        ps5_native_ime::emit(observation);
+    }
+#endif
+
     SDLImeManager::SDLImeManager(Event<SDL_Event*> *event):
     event(event),
     cursor(-1){}
@@ -87,6 +106,9 @@ namespace brls
         size_t maxStringLength,
         std::string initialText,
         bool isPassword) {
+#ifdef PS5_NATIVE_GPU
+        const auto imeRequest = ps5_native_ime::next_request_id();
+#endif
         EditTextDialog* dialog = new EditTextDialog();
         dialog->setPasswordStyle(isPassword);
         this->inputBuffer = initialText;
@@ -163,6 +185,8 @@ namespace brls
         auto eventID1 = event->subscribe([this, updateTextAndCursor, updateText, updateTextCursor](SDL_Event *e) {
             switch (e->type) {
             case SDL_TEXTINPUT:
+                // Content is deliberately not logged -- this same path handles
+                // password fields. The length is what tells you it arrived.
                 this->isEditing = false;
                 updateTextAndCursor(e->text.text);
                 break;
@@ -225,20 +249,98 @@ namespace brls
         });
 
         // cancel
-        dialog->getCancelEvent()->subscribe([this, eventID1]() {
+        dialog->getCancelEvent()->subscribe([this, eventID1
+#ifdef PS5_NATIVE_GPU
+            , imeRequest
+#endif
+        ]() {
+#ifdef PS5_NATIVE_GPU
+            nativeImeCompletion(imeRequest, ps5_native_ime::Stage::WrapperCancel);
+            SDL_ClearError();
+#endif
             SDL_StopTextInput();
+#ifdef PS5_NATIVE_GPU
+            nativeImeCompletion(imeRequest, ps5_native_ime::Stage::AfterStop);
+#endif
             event->unsubscribe(eventID1);
         });
 
         // submit
-        dialog->getSubmitEvent()->subscribe([this, eventID1, cb]() {
+        dialog->getSubmitEvent()->subscribe([this, eventID1, cb
+#ifdef PS5_NATIVE_GPU
+            , imeRequest
+#endif
+        ]() {
+#ifdef PS5_NATIVE_GPU
+            nativeImeCompletion(imeRequest, ps5_native_ime::Stage::WrapperSubmit);
+            SDL_ClearError();
+#endif
             SDL_StopTextInput();
+#ifdef PS5_NATIVE_GPU
+            nativeImeCompletion(imeRequest, ps5_native_ime::Stage::AfterStop);
+#endif
             event->unsubscribe(eventID1);
             cb(this->inputBuffer);
             return true;
         });
 
+        // Whether a platform's native IME actually appears is not something the
+        // caller can see, and on some backends (PS5) it is the open question.
+        // SDL_StartTextInput is what asks for it, via ShowScreenKeyboard.
+#ifdef PS5_NATIVE_GPU
+        SDL_Window* focus = SDL_GetKeyboardFocus();
+#endif
+#ifdef PS5_NATIVE_GPU
+        ps5_native_ime::Event imeObservation;
+        imeObservation.request_id = imeRequest;
+        imeObservation.focus = focus != nullptr;
+        imeObservation.screen_keyboard_enabled = SDL_GetHintBoolean(SDL_HINT_ENABLE_SCREEN_KEYBOARD, SDL_TRUE) == SDL_TRUE;
+#endif
+
+#ifdef __PS5__
+        // The PS5 IME dialog is modal and owns the whole editing session: it
+        // opens with its own buffer and hands the finished string back in one
+        // SDL_TEXTINPUT. So seed it with what is already in the field, and start
+        // ours empty, or the returned text is appended to the old value and a
+        // long string cannot be corrected without clearing it first.
+        //
+        // Cancelling is safe: the submit callback is what propagates the value,
+        // and cancel does not call it, so the caller keeps what it had.
+#ifdef PS5_NATIVE_GPU
+        imeObservation.initial_hint_set = SDL_SetHint(SDL_HINT_PS5_IME_INITIAL_TEXT, this->inputBuffer.c_str()) == SDL_TRUE;
+        imeObservation.password_hint_set = SDL_SetHint(SDL_HINT_PS5_IME_PASSWORD, isPassword ? "1" : "0") == SDL_TRUE;
+        imeObservation.limit_hint_set = SDL_SetHint(SDL_HINT_PS5_IME_MAX_TEXT_LENGTH, std::to_string(maxStringLength).c_str()) == SDL_TRUE;
+#else
+        SDL_SetHint(SDL_HINT_PS5_IME_INITIAL_TEXT, this->inputBuffer.c_str());
+#endif
+        this->inputBuffer.clear();
+        this->cursor = -1;
+        updateText();
+#endif
+
+#ifdef PS5_NATIVE_GPU
+        imeObservation.error = ps5_native_ime::classify_error(SDL_GetError());
+        imeObservation.text_events_active = SDL_IsTextInputActive() == SDL_TRUE;
+        ps5_native_ime::emit(imeObservation);
+        SDL_ClearError();
+#endif
         SDL_StartTextInput();
+
+#ifdef PS5_NATIVE_GPU
+        // Capture before any status query or diagnostic sink can replace the
+        // request-local SDL error. Only fixed categories and numeric codes leave
+        // this function; this observation does not change the provider result.
+        imeObservation.error = ps5_native_ime::classify_error(SDL_GetError());
+        imeObservation.stage = ps5_native_ime::Stage::AfterStart;
+        imeObservation.text_events_active = SDL_IsTextInputActive() == SDL_TRUE;
+        ps5_native_ime::emit(imeObservation);
+        imeObservation.shown_queried = focus != nullptr;
+        imeObservation.shown = focus && SDL_IsScreenKeyboardShown(focus) == SDL_TRUE;
+        imeObservation.error = ps5_native_ime::classify_error(SDL_GetError());
+        imeObservation.stage = ps5_native_ime::Stage::AfterShown;
+        ps5_native_ime::emit(imeObservation);
+#endif
+
         dialog->open();
     }
 

@@ -19,6 +19,10 @@
 #include <nanovg.h>
 
 #include <cmath>
+#ifdef PS5_NATIVE_GPU
+#include <functional>
+#include <utility>
+#endif
 
 // A VideoContext is responsible for providing a nanovg context for the app
 // (so by extension it manages all the graphics state as well as the window / context).
@@ -44,6 +48,26 @@ class VideoContext
      * Called at the end of every frame to end it (swap buffers...).
      */
     virtual void endFrame() = 0;
+#ifdef PS5_NATIVE_GPU
+    bool isRenderAvailable() const { return renderAvailable; }
+    void invalidateRender() { renderAvailable = false; }
+#endif
+#ifdef PS5_NATIVE_HDR
+    // Explicit owner handoff to embedded video. The currently bound GL FBO
+    // may belong to another renderer and is not an ownership contract.
+    virtual uint32_t getLinearHdrFramebuffer() const { return 0; }
+    // embedded video render target for this frame. Sets framebuffer and
+    // its internal format; false when no HDR target is available.
+    virtual bool selectHdrVideoTarget(uint32_t& framebuffer, int& internalFormat) { return false; }
+    // Immediately before the UI batch is submitted (after all views drew).
+    virtual void hdrBeforeUiFlush(NVGcontext* vg) { }
+#endif
+
+    // Called on the video thread after a successful swap. Used by embedded
+    // players to report presentation after the platform has submitted the frame.
+#ifdef PS5_NATIVE_GPU
+    void setPresentedCallback(std::function<void()> callback) { presentedCallback = std::move(callback); }
+#endif
 
     /**
      * Can be called by the application to reset the graphics
@@ -77,4 +101,13 @@ class VideoContext
     static inline int monitorIndex = 0;
 
     static inline int swapInterval = 1;
+
+#ifdef PS5_NATIVE_GPU
+  protected:
+    void notifyPresented() { if (presentedCallback) presentedCallback(); }
+
+  private:
+    bool renderAvailable = true;
+    std::function<void()> presentedCallback;
+#endif
 };

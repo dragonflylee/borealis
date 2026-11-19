@@ -32,6 +32,10 @@
 #include <borealis/platforms/ps4/ps4_platform.hpp>
 #endif
 
+#ifdef PS5
+#include <borealis/platforms/ps5/ps5_platform.hpp>
+#endif
+
 #if defined(BOREALIS_USE_DEKO3D)
 #elif defined(__GLFW__)
 #include <borealis/platforms/glfw/glfw_platform.hpp>
@@ -52,6 +56,8 @@ Platform* Platform::createPlatform()
     return new PsvPlatform();
 #elif defined(PS4)
     return new Ps4Platform();
+#elif defined(PS5)
+    return new Ps5Platform();
 #elif defined(__SDL2__)
     return new SDLPlatform();
 #elif defined(__GLFW__)

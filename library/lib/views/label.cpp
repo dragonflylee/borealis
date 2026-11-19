@@ -341,7 +341,11 @@ std::string Label::STConverter(const std::string& text)
     static bool skip = Application::getLocale() != LOCALE_ZH_HANT && Application::getLocale() != LOCALE_ZH_TW;
     if (skip || !OPENCC_ON)
         return text;
+#ifdef PS5_NATIVE_GPU
+    static opencc::SimpleConverter converter = opencc::SimpleConverter(resourceBase() + "opencc/s2t.json");
+#else
     static opencc::SimpleConverter converter = opencc::SimpleConverter(std::string(BRLS_RESOURCES) + "opencc/s2t.json");
+#endif
     return converter.Convert(text);
 #endif
     return text;

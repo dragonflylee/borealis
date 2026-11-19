@@ -71,6 +71,22 @@ void nvgDeleteGL3(NVGcontext* ctx);
 
 int nvglCreateImageFromHandleGL3(NVGcontext* ctx, GLuint textureId, int w, int h, int flags);
 GLuint nvglImageHandleGL3(NVGcontext* ctx, int image);
+#if defined(PS5_NATIVE_GPU)
+// draw calls queued for the next flush (nvgEndFrame).
+int nvglPendingCallCountGL3(NVGcontext* ctx);
+#endif
+#if defined(PS5_NATIVE_GPU)
+// bounds (minX, minY, maxX, maxY) of every queued vertex and the
+// view size, in NanoVG units. Returns 0 when nothing is queued.
+int nvglPendingBoundsGL3(NVGcontext* ctx, float bounds[4], float view[2]);
+#endif
+#if defined(PS5_NATIVE_GPU)
+// PQ-encoded output for drawing straight into the ten-bit window.
+void nvglSetHdrPqOutputGL3(NVGcontext* ctx, int enabled);
+// True when no queued call needs the stencil buffer, so the window's own
+// stencil contents cannot affect the result.
+int nvglPendingStencilFreeGL3(NVGcontext* ctx);
+#endif
 
 #endif
 
@@ -121,6 +137,9 @@ enum GLNVGuniformLoc {
 	GLNVG_LOC_VIEWSIZE,
 	GLNVG_LOC_TEX,
 	GLNVG_LOC_FRAG,
+#if defined(PS5_NATIVE_GPU)
+	GLNVG_LOC_HDRPQ,
+#endif
 	GLNVG_MAX_LOCS
 };
 
@@ -182,6 +201,11 @@ struct GLNVGcall {
 	int triangleCount;
 	int uniformOffset;
 	GLNVGblend blendFunc;
+#ifdef PS5_NATIVE_GPU
+	int nativeTriangles;
+	int nativeRing;
+	int nativeStrokeOffset, nativeStrokeCount;
+#endif
 };
 typedef struct GLNVGcall GLNVGcall;
 
@@ -235,6 +259,13 @@ struct GLNVGfragUniforms {
 typedef struct GLNVGfragUniforms GLNVGfragUniforms;
 
 struct GLNVGcontext {
+#if defined(PS5_NATIVE_GPU)
+	/* encode UI output as PQ for direct window drawing. */
+	int hdrPqOutput;
+#endif
+#ifdef PS5_NATIVE_GPU
+	int nativeExpandedVerts;
+#endif
 	GLNVGshader shader;
 	GLNVGtexture* textures;
 	float view[2];
@@ -276,6 +307,12 @@ struct GLNVGcontext {
 	#endif
 
 	int dummyTex;
+#ifdef PS5_NATIVE_GPU
+	GLenum textureUpdateError, textureUpdateCleanupError;
+	int textureUpdateStage;
+	unsigned int textureUpdateReports;
+	int textureBindingUnknown;
+#endif
 };
 typedef struct GLNVGcontext GLNVGcontext;
 
@@ -298,7 +335,11 @@ static unsigned int glnvg__nearestPow2(unsigned int num)
 static void glnvg__bindTexture(GLNVGcontext* gl, GLuint tex)
 {
 #if NANOVG_GL_USE_STATE_FILTER
-	if (gl->boundTexture != tex) {
+	if (
+#ifdef PS5_NATIVE_GPU
+		gl->textureBindingUnknown ||
+#endif
+		gl->boundTexture != tex) {
 		gl->boundTexture = tex;
 		glBindTexture(GL_TEXTURE_2D, tex);
 	}
@@ -505,6 +546,9 @@ static void glnvg__getUniforms(GLNVGshader* shader)
 {
 	shader->loc[GLNVG_LOC_VIEWSIZE] = glGetUniformLocation(shader->prog, "viewSize");
 	shader->loc[GLNVG_LOC_TEX] = glGetUniformLocation(shader->prog, "tex");
+#if defined(PS5_NATIVE_GPU)
+	shader->loc[GLNVG_LOC_HDRPQ] = glGetUniformLocation(shader->prog, "hdrUiPq");
+#endif
 
 #if NANOVG_GL_USE_UNIFORMBUFFER
 	shader->loc[GLNVG_LOC_FRAG] = glGetUniformBlockIndex(shader->prog, "frag");
@@ -636,6 +680,33 @@ static int glnvg__renderCreate(void* uptr)
 		"}\n"
 		"#endif\n"
 		"\n"
+#ifdef PS5_NATIVE_HDR
+		"// Applied after NanoVG's original encoded paint/image evaluation and coverage.\n"
+		"// RGB is linear BT.2020 absolute nits, premultiplied by alpha for source-over.\n"
+		"const float hdrUiPaperWhite = 203.0 / 10000.0;\n"
+		"vec4 hdrUiTransfer(vec4 encoded) {\n"
+		"    if (encoded.a <= 0.0) return vec4(0.0);\n"
+		"    vec3 s = clamp(encoded.rgb / encoded.a, 0.0, 1.0);\n"
+		"    vec3 l = mix(s / 12.92, pow((s + 0.055) / 1.055, vec3(2.4)),\n"
+		"                 greaterThan(s, vec3(0.04045)));\n"
+		"    vec3 bt2020 = vec3(\n"
+		"        dot(l, vec3(0.6274040, 0.3292820, 0.0433136)),\n"
+		"        dot(l, vec3(0.0690970, 0.9195400, 0.0113612)),\n"
+		"        dot(l, vec3(0.0163916, 0.0880132, 0.8955950)));\n"
+		"    return vec4(bt2020 * hdrUiPaperWhite * encoded.a, encoded.a);\n"
+		"}\n"
+#if defined(PS5_NATIVE_GPU)
+		"// the same colour, encoded PQ for drawing straight into the window.\n"
+		"uniform int hdrUiPq;\n"
+		"vec4 hdrUiTransferPq(vec4 encoded) {\n"
+		"    vec4 linear = hdrUiTransfer(encoded);\n"
+		"    if (linear.a <= 0.0) return vec4(0.0);\n"
+		"    vec3 p = pow(clamp(linear.rgb / linear.a, 0.0, 1.0), vec3(2610.0/16384.0));\n"
+		"    vec3 pq = pow((3424.0/4096.0 + 2413.0/128.0*p) / (1.0 + 2392.0/128.0*p), vec3(2523.0/32.0));\n"
+		"    return vec4(pq * linear.a, linear.a);\n"
+		"}\n"
+#endif
+#endif
 		"void main(void) {\n"
 		"   vec4 result;\n"
 		"	float scissor = scissorMask(fpos);\n"
@@ -685,7 +756,15 @@ static int glnvg__renderCreate(void* uptr)
 		"		result = color * innerCol;\n"
 		"	}\n"
 		"#ifdef NANOVG_GL3\n"
+#ifdef PS5_NATIVE_HDR
+#if defined(PS5_NATIVE_GPU)
+		"	outColor = type == 2 ? result : (hdrUiPq != 0 ? hdrUiTransferPq(result) : hdrUiTransfer(result));\n"
+#else
+		"	outColor = type == 2 ? result : hdrUiTransfer(result);\n"
+#endif
+#else
 		"	outColor = result;\n"
+#endif
 		"#else\n"
 		"	gl_FragColor = result;\n"
 		"#endif\n"
@@ -721,6 +800,9 @@ static int glnvg__renderCreate(void* uptr)
 	// Some platforms does not allow to have samples to unset textures.
 	// Create empty one which is bound when there's no texture specified.
 	gl->dummyTex = glnvg__renderCreateTexture(gl, NVG_TEXTURE_ALPHA, 1, 1, 0, NULL);
+#ifdef PS5_NATIVE_GPU
+	if (gl->dummyTex == 0) return 0;
+#endif
 
 	glnvg__checkError(gl, "create done");
 
@@ -732,6 +814,11 @@ static int glnvg__renderCreate(void* uptr)
 static int glnvg__renderCreateTexture(void* uptr, int type, int w, int h, int imageFlags, const unsigned char* data)
 {
 	GLNVGcontext* gl = (GLNVGcontext*)uptr;
+#ifdef PS5_NATIVE_GPU
+	// A pending error cannot be attributed to this upload. Refuse the attempt
+	// before allocating a name; the caller retains its previous image.
+	if (w <= 0 || h <= 0 || glGetError() != GL_NO_ERROR) return 0;
+#endif
 	GLNVGtexture* tex = glnvg__allocTexture(gl);
 
 	if (tex == NULL) return 0;
@@ -753,11 +840,24 @@ static int glnvg__renderCreateTexture(void* uptr, int type, int w, int h, int im
 #endif
 
 	glGenTextures(1, &tex->tex);
+#ifdef PS5_NATIVE_GPU
+	{
+		const GLenum error = glGetError();
+		if (tex->tex == 0 || error != GL_NO_ERROR) {
+			glnvg__deleteTexture(gl, tex->id);
+			return 0;
+		}
+	}
+#endif
 	tex->width = w;
 	tex->height = h;
 	tex->type = type;
 	tex->flags = imageFlags;
 	glnvg__bindTexture(gl, tex->tex);
+#ifdef PS5_NATIVE_GPU
+	// A failed bind can leave another image bound. Never upload into it.
+	if (glGetError() != GL_NO_ERROR) goto native_texture_failure;
+#endif
 
 	glPixelStorei(GL_UNPACK_ALIGNMENT,1);
 #ifndef NANOVG_GLES2
@@ -773,15 +873,29 @@ static int glnvg__renderCreateTexture(void* uptr, int type, int w, int h, int im
 	}
 #endif
 
+#ifdef PS5_NATIVE_GPU
+	// Failed unpack setup must not make GL read pixels with stale strides.
+	if (glGetError() != GL_NO_ERROR) goto native_texture_failure;
+#endif
 	if (type == NVG_TEXTURE_RGBA)
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
 	else
 #if defined(NANOVG_GLES2) || defined (NANOVG_GL2)
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, w, h, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, data);
+#elif defined(PS5_NATIVE_GPU)
+		// The native renderer can batch single-level RGBA8 samples. Keep the alpha atlas and
+		// uploads one byte per pixel: the shader consumes only the red channel.
+		// Bound the expanded backing to 4 MiB per image; larger atlases retain
+		// the existing compact format and synchronous rendering path.
+		glTexImage2D(GL_TEXTURE_2D, 0, w <= 1024 && h <= 1024 ? GL_RGBA8 : GL_RED,
+			w, h, 0, GL_RED, GL_UNSIGNED_BYTE, data);
 #elif defined(NANOVG_GLES3)
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, data);
 #else
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, data);
+#endif
+#ifdef PS5_NATIVE_GPU
+	if (glGetError() != GL_NO_ERROR) goto native_texture_failure;
 #endif
 
 	if (imageFlags & NVG_IMAGE_GENERATE_MIPMAPS) {
@@ -828,10 +942,39 @@ static int glnvg__renderCreateTexture(void* uptr, int type, int w, int h, int im
 	}
 #endif
 
+#ifdef PS5_NATIVE_GPU
+	// Cached dimensions describe the request, not successful GL storage.
+	// Restore the normal binding/unpack state before reporting any failure.
+	glnvg__bindTexture(gl, 0);
+	if (glGetError() != GL_NO_ERROR) goto native_texture_failure;
+	gl->textureBindingUnknown = 0;
+#else
 	glnvg__checkError(gl, "create tex");
 	glnvg__bindTexture(gl, 0);
+#endif
 
 	return tex->id;
+#ifdef PS5_NATIVE_GPU
+native_texture_failure:
+	// Cleanup is best effort; force future binds until a checked operation
+	// establishes a known binding. Do not consume and hide cleanup errors.
+	gl->textureBindingUnknown = 1;
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+#ifndef NANOVG_GLES2
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+	glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+	glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+#endif
+	// The binding cache may describe a failed GL call. Force the cleanup bind.
+	glBindTexture(GL_TEXTURE_2D, 0);
+#if NANOVG_GL_USE_STATE_FILTER
+	gl->boundTexture = 0;
+#endif
+	// This fresh name was never published, so NODELETE cannot transfer it.
+	tex->flags &= ~NVG_IMAGE_NODELETE;
+	glnvg__deleteTexture(gl, tex->id);
+	return 0;
+#endif
 }
 
 
@@ -841,6 +984,82 @@ static int glnvg__renderDeleteTexture(void* uptr, int image)
 	return glnvg__deleteTexture(gl, image);
 }
 
+#ifdef PS5_NATIVE_GPU
+// Stages: 1 pre-existing GL error, 2 bind, 3 unpack, 4 upload, 5 restore.
+static int glnvg__nativeUpdateFailure(GLNVGcontext* gl, int stage, GLenum error, GLenum cleanup)
+{
+	if (gl->textureUpdateReports < 16 &&
+		(gl->textureUpdateStage != stage || gl->textureUpdateError != error || gl->textureUpdateCleanupError != cleanup)) {
+		fprintf(stderr, "PS5 texture update failed stage=%d error=0x%04x cleanup=0x%04x\n", stage, (unsigned)error, (unsigned)cleanup);
+		gl->textureUpdateReports++;
+	}
+	gl->textureUpdateStage = stage;
+	gl->textureUpdateError = error;
+	gl->textureUpdateCleanupError = cleanup;
+	return 0;
+}
+
+static int glnvg__renderUpdateTexture(void* uptr, int image, int x, int y, int w, int h, const unsigned char* data)
+{
+	GLNVGcontext* gl = (GLNVGcontext*)uptr;
+	GLNVGtexture* tex = glnvg__findTexture(gl, image);
+	GLenum error, cleanup;
+	int stage = 2;
+	if (tex == NULL || tex->tex == 0 || data == NULL || tex->width <= 0 || tex->height <= 0 ||
+		x < 0 || y < 0 || w <= 0 || h <= 0 || x > tex->width || y > tex->height ||
+		w > tex->width-x || h > tex->height-y) return 0;
+	// Do not drain and ignore unrelated errors: reject before changing GL state,
+	// and retain their numeric identity separately from this upload's stages.
+	error = glGetError();
+	if (error != GL_NO_ERROR) return glnvg__nativeUpdateFailure(gl, 1, error, GL_NO_ERROR);
+	glnvg__bindTexture(gl, tex->tex);
+	error = glGetError();
+	if (error != GL_NO_ERROR) goto native_update_restore;
+	stage = 3;
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+#ifndef NANOVG_GLES2
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, tex->width);
+	glPixelStorei(GL_UNPACK_SKIP_PIXELS, x);
+	glPixelStorei(GL_UNPACK_SKIP_ROWS, y);
+#else
+	data += (size_t)y * (size_t)tex->width * (tex->type == NVG_TEXTURE_RGBA ? 4 : 1);
+	x = 0; w = tex->width;
+#endif
+	error = glGetError();
+	if (error != GL_NO_ERROR) goto native_update_restore;
+	stage = 4;
+	if (tex->type == NVG_TEXTURE_RGBA)
+		glTexSubImage2D(GL_TEXTURE_2D, 0, x,y, w,h, GL_RGBA, GL_UNSIGNED_BYTE, data);
+	else
+#if defined(NANOVG_GLES2) || defined(NANOVG_GL2)
+		glTexSubImage2D(GL_TEXTURE_2D, 0, x,y, w,h, GL_LUMINANCE, GL_UNSIGNED_BYTE, data);
+#else
+		glTexSubImage2D(GL_TEXTURE_2D, 0, x,y, w,h, GL_RED, GL_UNSIGNED_BYTE, data);
+#endif
+	error = glGetError();
+native_update_restore:
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+#ifndef NANOVG_GLES2
+	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+	glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+	glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+#endif
+	// A failed bind may invalidate the cache. Restore without trusting it.
+	glBindTexture(GL_TEXTURE_2D, 0);
+#if NANOVG_GL_USE_STATE_FILTER
+	gl->boundTexture = 0;
+#endif
+	cleanup = glGetError();
+	// Generic cached binds cannot prove a failed driver call was repaired.
+	// Keep forcing them until this or another checked upload establishes zero.
+	gl->textureBindingUnknown = cleanup != GL_NO_ERROR;
+	if (error != GL_NO_ERROR || cleanup != GL_NO_ERROR)
+		return glnvg__nativeUpdateFailure(gl, error != GL_NO_ERROR ? stage : 5, error, cleanup);
+	gl->textureUpdateStage = 0;
+	gl->textureUpdateError = gl->textureUpdateCleanupError = GL_NO_ERROR;
+	return 1;
+}
+#else
 static int glnvg__renderUpdateTexture(void* uptr, int image, int x, int y, int w, int h, const unsigned char* data)
 {
 	GLNVGcontext* gl = (GLNVGcontext*)uptr;
@@ -885,6 +1104,8 @@ static int glnvg__renderUpdateTexture(void* uptr, int image, int x, int y, int w
 
 	return 1;
 }
+
+#endif
 
 static int glnvg__renderGetTextureSize(void* uptr, int image, int* w, int* h)
 {
@@ -1081,10 +1302,33 @@ static void glnvg__convexFill(GLNVGcontext* gl, GLNVGcall* call)
 	glnvg__checkError(gl, "convex fill");
 
 	for (i = 0; i < npaths; i++) {
-		glDrawArrays(GL_TRIANGLE_FAN, paths[i].fillOffset, paths[i].fillCount);
+#ifdef PS5_NATIVE_GPU
+		// The native expansion stores independent fill triangles followed by
+		// independent fringe triangles. Both use exactly the same GL state.
+		// Submit that ordered range once; do not merge fans, strips or stencil
+		// commands that retained the original representation.
+		if (call->type == GLNVG_CONVEXFILL && call->nativeTriangles &&
+			paths[i].fillCount >= 0 && paths[i].fillCount <= 65536 &&
+			paths[i].strokeCount >= 0 && paths[i].strokeCount <= 65536 - paths[i].fillCount &&
+			paths[i].fillOffset >= 0 && paths[i].fillOffset <= gl->nverts &&
+			paths[i].fillCount + paths[i].strokeCount <= gl->nverts - paths[i].fillOffset &&
+			paths[i].strokeOffset == paths[i].fillOffset + paths[i].fillCount) {
+			glDrawArrays(GL_TRIANGLES, paths[i].fillOffset, paths[i].fillCount + paths[i].strokeCount);
+			continue;
+		}
+#endif
+		glDrawArrays(
+#ifdef PS5_NATIVE_GPU
+			call->nativeTriangles ? GL_TRIANGLES :
+#endif
+			GL_TRIANGLE_FAN, paths[i].fillOffset, paths[i].fillCount);
 		// Draw fringes
 		if (paths[i].strokeCount > 0) {
-			glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
+			glDrawArrays(
+#ifdef PS5_NATIVE_GPU
+				call->nativeTriangles ? GL_TRIANGLES :
+#endif
+				GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
 		}
 	}
 }
@@ -1114,6 +1358,21 @@ static void glnvg__stroke(GLNVGcontext* gl, GLNVGcall* call)
 	GLNVGpath* paths = &gl->paths[call->pathOffset];
 	int npaths = call->pathCount, i;
 
+#if defined(PS5_NATIVE_GPU)
+	if (call->nativeTriangles) {
+		// nvgStencil resets its scissor flag immediately after enqueueing the
+		// mask. Inspect actual dispatch state, including masks across frames.
+		if (!glIsEnabled(GL_STENCIL_TEST)) {
+			glnvg__setUniforms(gl, call->uniformOffset, call->image);
+			glDrawArrays(GL_TRIANGLES, paths[0].strokeOffset, paths[0].strokeCount);
+			return;
+		}
+		paths[0].strokeOffset = call->nativeStrokeOffset;
+		paths[0].strokeCount = call->nativeStrokeCount;
+		call->nativeTriangles = 0;
+	}
+#endif
+
 	if (gl->flags & NVG_STENCIL_STROKES) {
 
 		glEnable(GL_STENCIL_TEST);
@@ -1126,14 +1385,12 @@ static void glnvg__stroke(GLNVGcontext* gl, GLNVGcall* call)
 		glnvg__checkError(gl, "stroke fill 0");
 		for (i = 0; i < npaths; i++)
 			glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
-
 		// Draw anti-aliased pixels.
 		glnvg__setUniforms(gl, call->uniformOffset, call->image);
 		glnvg__stencilFunc(gl, GL_EQUAL, 0x00, 0xff);
 		glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
 		for (i = 0; i < npaths; i++)
 			glDrawArrays(GL_TRIANGLE_STRIP, paths[i].strokeOffset, paths[i].strokeCount);
-
 		// Clear stencil buffer.
 		glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 		glnvg__stencilFunc(gl, GL_ALWAYS, 0x0, 0xff);
@@ -1167,6 +1424,9 @@ static void glnvg__triangles(GLNVGcontext* gl, GLNVGcall* call)
 static void glnvg__renderCancel(void* uptr) {
 	GLNVGcontext* gl = (GLNVGcontext*)uptr;
 	gl->nverts = 0;
+#ifdef PS5_NATIVE_GPU
+	gl->nativeExpandedVerts = 0;
+#endif
 	gl->npaths = 0;
 	gl->ncalls = 0;
 	gl->nuniforms = 0;
@@ -1225,6 +1485,10 @@ static void glnvg__renderFlush(void* uptr)
 
 		// Setup require GL state.
 		glUseProgram(gl->shader.prog);
+#if defined(PS5_NATIVE_GPU)
+		if (gl->shader.loc[GLNVG_LOC_HDRPQ] >= 0)
+			glUniform1i(gl->shader.loc[GLNVG_LOC_HDRPQ], gl->hdrPqOutput);
+#endif
 
 		glEnable(GL_CULL_FACE);
 		glCullFace(GL_BACK);
@@ -1305,6 +1569,9 @@ static void glnvg__renderFlush(void* uptr)
 
 	// Reset calls
 	gl->nverts = 0;
+#ifdef PS5_NATIVE_GPU
+	gl->nativeExpandedVerts = 0;
+#endif
 	gl->npaths = 0;
 	gl->ncalls = 0;
 	gl->nuniforms = 0;
@@ -1397,10 +1664,191 @@ static void glnvg__vset(NVGvertex* vtx, float x, float y, float u, float v)
 	vtx->v = v;
 }
 
+
+#ifdef PS5_NATIVE_GPU
+/* The native retained batch supports independent triangles. Adapt only ordinary
+ * convex fills: stencil paths and strokes retain their original implementation.
+ * Appending at most 65536 vertices (1 MiB) per frame bounds extra vertex data.
+ * Budget/allocation failure leaves the original vertices and draw intact. */
+static void glnvg__nativeConvexTriangles(GLNVGcontext* gl, GLNVGcall* call)
+{
+	GLNVGpath* path;
+	int fill, stroke, total, offset, i, output;
+	if (call->type != GLNVG_CONVEXFILL || call->nativeTriangles ||
+		call->pathCount != 1 || call->pathOffset < 0 || call->pathOffset >= gl->npaths ||
+		gl->nverts < 0 || gl->cverts < 0 || gl->nativeExpandedVerts < 0 ||
+		gl->nativeExpandedVerts > 65536) return;
+	path = &gl->paths[call->pathOffset];
+	if (path->fillCount < 0 || path->strokeCount < 0 ||
+		path->fillOffset < 0 || path->strokeOffset < 0 ||
+		path->fillOffset > gl->nverts || path->strokeOffset > gl->nverts ||
+		path->fillCount > gl->nverts - path->fillOffset ||
+		path->strokeCount > gl->nverts - path->strokeOffset) return;
+	/* Bound before multiplying, including degenerate 0/1/2-vertex paths. */
+	if (path->fillCount > 21847 || path->strokeCount > 21847) return;
+	fill = path->fillCount < 3 ? 0 : (path->fillCount - 2) * 3;
+	stroke = path->strokeCount < 3 ? 0 : (path->strokeCount - 2) * 3;
+	total = fill + stroke;
+	if (total == 0 || total > 65536 - gl->nativeExpandedVerts) return;
+	/* glnvg__allocVerts uses signed capacities and 1.5x growth. */
+	if (gl->nverts > 0x7fffffff - total ||
+		gl->cverts / 2 > 0x7fffffff - glnvg__maxi(gl->nverts + total, 4096)) return;
+	offset = glnvg__allocVerts(gl, total);
+	if (offset < 0) {
+		return;
+	}
+	output = offset;
+	/* Read offsets after realloc; the old array pointer may have moved. Fan
+	 * and strip expansion preserve winding and the last provoking vertex. */
+	for (i = 0; i < path->fillCount - 2; i++) {
+		gl->verts[output++] = gl->verts[path->fillOffset];
+		gl->verts[output++] = gl->verts[path->fillOffset + i + 1];
+		gl->verts[output++] = gl->verts[path->fillOffset + i + 2];
+	}
+	for (i = 0; i < path->strokeCount - 2; i++) {
+		gl->verts[output++] = gl->verts[path->strokeOffset + i + (i & 1)];
+		gl->verts[output++] = gl->verts[path->strokeOffset + i + 1 - (i & 1)];
+		gl->verts[output++] = gl->verts[path->strokeOffset + i + 2];
+	}
+	path->fillOffset = offset;
+	path->fillCount = fill;
+	path->strokeOffset = offset + fill;
+	path->strokeCount = stroke;
+	call->nativeTriangles = 1;
+	gl->nativeExpandedVerts += total;
+}
+#endif
+
+#ifdef PS5_NATIVE_GPU
+// Avoid uploading and submitting ordinary draws whose complete tessellated
+// geometry lies beyond one viewport edge. Include AA fringe vertices. This is
+// hardware clip-space rejection, independent of paint, blending and scissoring;
+// it must never suppress stencil construction/clear or compound path commands.
+static int glnvg__nativeOutsideViewport(const GLNVGcontext* gl,
+	const NVGvertex* first, int nfirst, const NVGvertex* second, int nsecond)
+{
+	int part, i, mask = 15;
+	float right, bottom;
+	if (!gl || !isfinite(gl->view[0]) || !isfinite(gl->view[1]) ||
+		gl->view[0] < 1.0f || gl->view[1] < 1.0f ||
+		gl->view[0] > 65536.0f || gl->view[1] > 65536.0f ||
+		nfirst < 0 || nsecond < 0 || nsecond > 65536 || nfirst > 65536 - nsecond ||
+		(nfirst && !first) || (nsecond && !second) || nfirst + nsecond == 0)
+		return 0;
+	// Retain a full logical pixel beyond every edge for floating-point rounding.
+	right = gl->view[0] + 1.0f;
+	bottom = gl->view[1] + 1.0f;
+	for (part = 0; part < 2; ++part) {
+		const NVGvertex* vertices = part ? second : first;
+		int count = part ? nsecond : nfirst;
+		for (i = 0; i < count; ++i) {
+			float x = vertices[i].x, y = vertices[i].y;
+			int outside = 0;
+			if (!isfinite(x) || !isfinite(y) || fabsf(x) > 1048576.0f || fabsf(y) > 1048576.0f)
+				return 0;
+			if (x < -1.0f) outside |= 1;
+			if (x > right) outside |= 2;
+			if (y < -1.0f) outside |= 4;
+			if (y > bottom) outside |= 8;
+			mask &= outside;
+			if (!mask) return 0;
+		}
+	}
+	return mask != 0;
+}
+
+// Cull only ordinary source-over geometry outside an axis-aligned scissor.
+// NanoVG's shader has a half-fringe ramp outside the rectangle; keep that ramp
+// plus a logical pixel of rounding margin. Rotated/sheared/singular scissors,
+// stencil commands and non-source-over blends retain the original path. In
+// particular NVG_COPY must still write transparent pixels outside its scissor.
+static int glnvg__nativeOutsideScissor(const NVGscissor* scissor,
+	NVGcompositeOperationState op, float fringe,
+	const NVGvertex* first, int nfirst, const NVGvertex* second, int nsecond)
+{
+	int part, i, mask = 15;
+	float left, right, top, bottom, width, height, margin;
+	if (!scissor || scissor->stencilFlag != NVG_STENCIL_DEFAULT ||
+		op.srcRGB != NVG_ONE || op.srcAlpha != NVG_ONE ||
+		op.dstRGB != NVG_ONE_MINUS_SRC_ALPHA || op.dstAlpha != NVG_ONE_MINUS_SRC_ALPHA ||
+		!isfinite(fringe) || fringe <= 0 || fringe > 16 ||
+		nfirst < 0 || nsecond < 0 || nsecond > 65536 || nfirst > 65536 - nsecond ||
+		(nfirst && !first) || (nsecond && !second) || nfirst + nsecond == 0)
+		return 0;
+	for (i = 0; i < 6; ++i)
+		if (!isfinite(scissor->xform[i]) || fabsf(scissor->xform[i]) > 1048576.0f) return 0;
+	if (scissor->xform[1] != 0 || scissor->xform[2] != 0 ||
+		fabsf(scissor->xform[0]) < 0.01f || fabsf(scissor->xform[3]) < 0.01f)
+		return 0;
+	for (i = 0; i < 2; ++i)
+		if (!isfinite(scissor->extent[i]) || scissor->extent[i] < 0 || scissor->extent[i] > 65536) return 0;
+	width = fabsf(scissor->xform[0]) * scissor->extent[0];
+	height = fabsf(scissor->xform[3]) * scissor->extent[1];
+	if (width > 1048576 || height > 1048576) return 0;
+	margin = fringe * 0.5f + 1.0f;
+	left = scissor->xform[4] - width - margin;
+	right = scissor->xform[4] + width + margin;
+	top = scissor->xform[5] - height - margin;
+	bottom = scissor->xform[5] + height + margin;
+	for (part = 0; part < 2; ++part) {
+		const NVGvertex* vertices = part ? second : first;
+		int count = part ? nsecond : nfirst;
+		for (i = 0; i < count; ++i) {
+			float x = vertices[i].x, y = vertices[i].y;
+			int outside = 0;
+			if (!isfinite(x) || !isfinite(y) || fabsf(x) > 1048576 || fabsf(y) > 1048576) return 0;
+			if (x < left) outside |= 1;
+			if (x > right) outside |= 2;
+			if (y < top) outside |= 4;
+			if (y > bottom) outside |= 8;
+			mask &= outside;
+			if (!mask) return 0;
+		}
+	}
+	return mask != 0;
+}
+
+// Adjacent text runs commonly share atlas, clip and paint. Join only complete
+// contiguous triangle lists with byte-identical initialized uniforms and blend
+// state. No sorting, vertex copies, extra allocations or stencil crossings.
+static void glnvg__nativeMergeTriangles(GLNVGcontext* gl)
+{
+	GLNVGcall *a, *b;
+	if (gl->ncalls < 2) return;
+	a = &gl->calls[gl->ncalls - 2];
+	b = &gl->calls[gl->ncalls - 1];
+	if (a->type != GLNVG_TRIANGLES || b->type != GLNVG_TRIANGLES || a->image != b->image ||
+		a->triangleCount <= 0 || b->triangleCount <= 0 ||
+		a->triangleCount > 65536 || b->triangleCount > 65536 - a->triangleCount ||
+		a->triangleCount % 3 || b->triangleCount % 3 ||
+		a->triangleOffset < 0 || a->triangleOffset > gl->nverts ||
+		a->triangleCount > gl->nverts - a->triangleOffset ||
+		b->triangleOffset != a->triangleOffset + a->triangleCount ||
+		b->triangleCount > gl->nverts - b->triangleOffset ||
+		a->blendFunc.srcRGB != b->blendFunc.srcRGB || a->blendFunc.dstRGB != b->blendFunc.dstRGB ||
+		a->blendFunc.srcAlpha != b->blendFunc.srcAlpha || a->blendFunc.dstAlpha != b->blendFunc.dstAlpha ||
+		memcmp(nvg__fragUniformPtr(gl, a->uniformOffset), nvg__fragUniformPtr(gl, b->uniformOffset),
+			sizeof(GLNVGfragUniforms)) != 0)
+		return;
+	a->triangleCount += b->triangleCount;
+	// Called immediately after successfully constructing the final call/uniform.
+	--gl->ncalls;
+	--gl->nuniforms;
+}
+#endif
+
 static void glnvg__renderFill(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, float fringe,
 							  const float* bounds, const NVGpath* paths, int npaths)
 {
 	GLNVGcontext* gl = (GLNVGcontext*)uptr;
+#ifdef PS5_NATIVE_GPU
+	if (npaths == 1 && paths && paths[0].convex && scissor->stencilFlag == NVG_STENCIL_DEFAULT &&
+		(glnvg__nativeOutsideViewport(gl, paths[0].fill, paths[0].nfill, paths[0].stroke, paths[0].nstroke) ||
+		 glnvg__nativeOutsideScissor(scissor, compositeOperation, fringe,
+			paths[0].fill, paths[0].nfill, paths[0].stroke, paths[0].nstroke))) {
+		return;
+	}
+#endif
 	GLNVGcall* call = glnvg__allocCall(gl);
 	NVGvertex* quad;
 	GLNVGfragUniforms* frag;
@@ -1476,6 +1924,9 @@ static void glnvg__renderFill(void* uptr, NVGpaint* paint, NVGcompositeOperation
 		glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call->uniformOffset), paint, scissor, fringe, fringe, -1.0f);
 	}
 
+#ifdef PS5_NATIVE_GPU
+	glnvg__nativeConvexTriangles(gl, call);
+#endif
 	return;
 
 error:
@@ -1483,6 +1934,94 @@ error:
 	// Roll back the last call to prevent drawing it.
 	if (gl->ncalls > 0) gl->ncalls--;
 }
+
+#if defined(PS5_NATIVE_GPU)
+static double glnvg__nativeStrokeCross(const NVGvertex* a, const NVGvertex* b, const NVGvertex* c)
+{
+	return ((double)b->x-a->x)*((double)c->y-a->y) -
+		((double)b->y-a->y)*((double)c->x-a->x);
+}
+
+/* Certify the actual AA strip, not just its convex centerline. A simple
+ * annulus with two strictly convex nested boundaries and consistently oriented
+ * triangles covers its interior once. Overlapping/beveled joins, small inner
+ * rings and uncertain geometry retain the stencil implementation. This also
+ * keeps translucent/fading outlines correct. At most 128 vertex pairs and no
+ * temporary allocation; expansion shares the existing 1 MiB/frame budget. */
+static int glnvg__nativeStrokeRingReason(const NVGpath* path)
+{
+	const NVGvertex* v;
+	int count, i, j, ring;
+	double sign;
+	/* Every geometry property the conversion relies on is checked below. */
+	if (!path || !path->closed || !path->convex) return 2;
+	if (path->nbevel) return 3;
+	/* Admission checks are quadratic in the point count, so keep a small bound. */
+	if (path->count < 3 || path->count > 128 || !path->stroke ||
+		path->nstroke != 2*(path->count+1)) return 4;
+	v = path->stroke;
+	count = path->count;
+	for (i = 0; i < path->nstroke; ++i) {
+		if (!isfinite(v[i].x) || !isfinite(v[i].y) || !isfinite(v[i].u) || !isfinite(v[i].v) ||
+			fabsf(v[i].x) > 65536 || fabsf(v[i].y) > 65536) return 5;
+	}
+	if (memcmp(v, v+2*count, 2*sizeof(NVGvertex)) != 0) return 5;
+	sign = glnvg__nativeStrokeCross(v, v+2, v+4) > 0 ? 1 : -1;
+	// Each boundary must be simple and strictly convex, with the same winding.
+	for (ring = 0; ring < 2; ++ring) for (i = 0; i < count; ++i) {
+		int next = (i+1)%count;
+		for (j = 0; j < count; ++j) {
+			if (j == i || j == next) continue;
+			if (sign*glnvg__nativeStrokeCross(v+2*i+ring, v+2*next+ring, v+2*j+ring) <= 0.001) return 6;
+		}
+	}
+	// NanoVG's first vertex in each pair is the inner boundary for this winding.
+	// Require strict containment; do not infer safety from a radius or width.
+	for (i = 0; i < count; ++i) for (j = 0; j < count; ++j)
+		if (sign*glnvg__nativeStrokeCross(v+2*i+1, v+2*((i+1)%count)+1, v+2*j) <= 0.001) return 7;
+	// Preserve strip winding, including the closing pair. Folded connecting
+	// edges would create a reversed or degenerate triangle and are rejected.
+	for (i = 0; i < path->nstroke-2; ++i)
+		if (sign*glnvg__nativeStrokeCross(v+i+(i&1), v+i+1-(i&1), v+i+2) <= 0.001) return 8;
+	return 0;
+}
+
+
+static void glnvg__nativeStrokeTriangles(GLNVGcontext* gl, GLNVGcall* call, const NVGpath* source)
+{
+	GLNVGpath* path;
+	int total, offset, i, output;
+	if (!call->nativeRing || call->nativeTriangles || call->type != GLNVG_STROKE ||
+		call->pathCount != 1 || call->pathOffset < 0 || call->pathOffset >= gl->npaths ||
+		gl->nverts < 0 || gl->cverts < 0 || gl->nativeExpandedVerts < 0 ||
+		gl->nativeExpandedVerts > 65536) {
+		return;
+	}
+	if (glnvg__nativeStrokeRingReason(source)) return;
+	path = &gl->paths[call->pathOffset];
+	if (path->strokeCount != source->nstroke || path->strokeOffset < 0 ||
+		path->strokeOffset > gl->nverts || path->strokeCount > gl->nverts-path->strokeOffset) return;
+	total = (path->strokeCount-2)*3;
+	if (total > 65536-gl->nativeExpandedVerts || gl->nverts > 0x7fffffff-total ||
+		gl->cverts/2 > 0x7fffffff-glnvg__maxi(gl->nverts+total,4096)) return;
+	offset = glnvg__allocVerts(gl, total);
+	if (offset < 0) {
+		return;
+	}
+	output = offset;
+	for (i = 0; i < path->strokeCount-2; ++i) {
+		gl->verts[output++] = gl->verts[path->strokeOffset+i+(i&1)];
+		gl->verts[output++] = gl->verts[path->strokeOffset+i+1-(i&1)];
+		gl->verts[output++] = gl->verts[path->strokeOffset+i+2];
+	}
+	call->nativeStrokeOffset = path->strokeOffset;
+	call->nativeStrokeCount = path->strokeCount;
+	path->strokeOffset = offset;
+	path->strokeCount = total;
+	call->nativeTriangles = 1;
+	gl->nativeExpandedVerts += total;
+}
+#endif
 
 static void glnvg__renderStroke(void* uptr, NVGpaint* paint, NVGcompositeOperationState compositeOperation, NVGscissor* scissor, float fringe,
 								float strokeWidth, const NVGpath* paths, int npaths)
@@ -1494,6 +2033,9 @@ static void glnvg__renderStroke(void* uptr, NVGpaint* paint, NVGcompositeOperati
 	if (call == NULL) return;
 
 	call->type = GLNVG_STROKE;
+#ifdef PS5_NATIVE_GPU
+	call->nativeRing = npaths == 1;
+#endif
 	call->pathOffset = glnvg__allocPaths(gl, npaths);
 	if (call->pathOffset == -1) goto error;
 	call->pathCount = npaths;
@@ -1532,6 +2074,14 @@ static void glnvg__renderStroke(void* uptr, NVGpaint* paint, NVGcompositeOperati
 		glnvg__convertPaint(gl, nvg__fragUniformPtr(gl, call->uniformOffset), paint, scissor, strokeWidth, fringe, -1.0f);
 	}
 
+#if defined(PS5_NATIVE_GPU)
+	// Explicit stencil clips and non-source-over paints retain all original state.
+	if (scissor->stencilFlag == NVG_STENCIL_DEFAULT &&
+		compositeOperation.srcRGB == NVG_ONE && compositeOperation.srcAlpha == NVG_ONE &&
+		compositeOperation.dstRGB == NVG_ONE_MINUS_SRC_ALPHA && compositeOperation.dstAlpha == NVG_ONE_MINUS_SRC_ALPHA)
+		glnvg__nativeStrokeTriangles(gl, call, npaths == 1 ? paths : NULL);
+#endif
+
 	return;
 
 error:
@@ -1544,6 +2094,12 @@ static void glnvg__renderTriangles(void* uptr, NVGpaint* paint, NVGcompositeOper
 								   const NVGvertex* verts, int nverts, float fringe)
 {
 	GLNVGcontext* gl = (GLNVGcontext*)uptr;
+#ifdef PS5_NATIVE_GPU
+	if (glnvg__nativeOutsideViewport(gl, verts, nverts, NULL, 0) ||
+		glnvg__nativeOutsideScissor(scissor, compositeOperation, fringe, verts, nverts, NULL, 0)) {
+		return;
+	}
+#endif
 	GLNVGcall* call = glnvg__allocCall(gl);
 	GLNVGfragUniforms* frag;
 
@@ -1566,6 +2122,10 @@ static void glnvg__renderTriangles(void* uptr, NVGpaint* paint, NVGcompositeOper
 	frag = nvg__fragUniformPtr(gl, call->uniformOffset);
 	glnvg__convertPaint(gl, frag, paint, scissor, 1.0f, fringe, -1.0f);
 	frag->type = NSVG_SHADER_IMG;
+
+#ifdef PS5_NATIVE_GPU
+	glnvg__nativeMergeTriangles(gl);
+#endif
 
 	return;
 
@@ -1705,5 +2265,57 @@ GLuint nvglImageHandleGLES3(NVGcontext* ctx, int image)
 	GLNVGtexture* tex = glnvg__findTexture(gl, image);
 	return tex->tex;
 }
+
+#if defined(PS5_NATIVE_GPU)
+#if defined NANOVG_GL3
+int nvglPendingCallCountGL3(NVGcontext* ctx)
+{
+	GLNVGcontext* gl = (GLNVGcontext*)nvgInternalParams(ctx)->userPtr;
+	return gl->ncalls;
+}
+#endif
+#endif
+#if defined(PS5_NATIVE_GPU)
+#if defined NANOVG_GL3
+int nvglPendingBoundsGL3(NVGcontext* ctx, float bounds[4], float view[2])
+{
+	GLNVGcontext* gl = (GLNVGcontext*)nvgInternalParams(ctx)->userPtr;
+	int i;
+	if (gl->ncalls <= 0 || gl->nverts <= 0) return 0;
+	bounds[0] = bounds[2] = gl->verts[0].x;
+	bounds[1] = bounds[3] = gl->verts[0].y;
+	for (i = 1; i < gl->nverts; i++) {
+		const NVGvertex* v = &gl->verts[i];
+		if (v->x < bounds[0]) bounds[0] = v->x;
+		if (v->x > bounds[2]) bounds[2] = v->x;
+		if (v->y < bounds[1]) bounds[1] = v->y;
+		if (v->y > bounds[3]) bounds[3] = v->y;
+	}
+	view[0] = gl->view[0];
+	view[1] = gl->view[1];
+	return 1;
+}
+#endif
+#endif
+#if defined(PS5_NATIVE_GPU)
+#if defined NANOVG_GL3
+void nvglSetHdrPqOutputGL3(NVGcontext* ctx, int enabled)
+{
+	GLNVGcontext* gl = (GLNVGcontext*)nvgInternalParams(ctx)->userPtr;
+	gl->hdrPqOutput = enabled ? 1 : 0;
+}
+
+int nvglPendingStencilFreeGL3(NVGcontext* ctx)
+{
+	GLNVGcontext* gl = (GLNVGcontext*)nvgInternalParams(ctx)->userPtr;
+	int i;
+	for (i = 0; i < gl->ncalls; i++) {
+		const int type = gl->calls[i].type;
+		if (type != GLNVG_CONVEXFILL && type != GLNVG_TRIANGLES) return 0;
+	}
+	return 1;
+}
+#endif
+#endif
 
 #endif /* NANOVG_GL_IMPLEMENTATION */

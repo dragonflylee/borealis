@@ -19,6 +19,10 @@
 #include <SDL2/SDL.h>
 
 #include <borealis/core/video.hpp>
+#ifdef PS5_NATIVE_HDR
+#include <memory>
+namespace ps5_native_hdr { class Frame; }
+#endif
 
 namespace brls
 {
@@ -35,6 +39,7 @@ class SDLVideoContext : public VideoContext
     void clear(NVGcolor color) override;
     void beginFrame() override;
     void endFrame() override;
+
     void setSwapInterval(int interval) override;
     void resetState() override;
     void fullScreen(bool fs) override;
@@ -42,10 +47,27 @@ class SDLVideoContext : public VideoContext
     SDL_Window* getSDLWindow();
 
     double getScaleFactor() override;
+#ifdef PS5_NATIVE_HDR
+    uint32_t getLinearHdrFramebuffer() const override;
+    bool selectHdrVideoTarget(uint32_t& framebuffer, int& internalFormat) override;
+    void hdrBeforeUiFlush(NVGcontext* vg) override;
+#endif
 
   private:
+#ifdef PS5_NATIVE_GPU
+    void cleanup();
+#endif
     SDL_Window* window     = nullptr;
+#ifdef PS5_NATIVE_GPU
+    SDL_GLContext glContext = nullptr;
+#endif
     NVGcontext* nvgContext = nullptr;
+#ifdef PS5_NATIVE_HDR
+    std::unique_ptr<ps5_native_hdr::Frame> hdrFrame;
+    bool hdrSelected = false;
+    NVGcolor hdrClearColor{};
+    bool hdrClearNow = true;
+#endif
 };
 
 } // namespace brls
