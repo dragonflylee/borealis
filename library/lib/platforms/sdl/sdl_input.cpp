@@ -327,7 +327,9 @@ static const size_t SDL_AXIS_MAPPING[SDL_GAMEPAD_AXIS_MAX] = {
     RIGHT_Z,
 };
 
-std::vector<std::pair<SDL_JoystickID, SDL_GameController*>> controllers;
+static std::vector<std::pair<SDL_JoystickID, SDL_GameController*>> controllers;
+
+static std::mutex controllersMutex;
 
 static int mouseButtons[3] = { 0 };
 
@@ -361,25 +363,92 @@ static inline int getKeyboardKeys(SDL_Scancode code)
     }
 }
 
+static void fillControllerState(ControllerState* state, SDL_GameController* c)
+{
+    for (size_t i = 0; i < SDL_GAMEPAD_BUTTON_MAX; i++)
+    {
+        // Translate SDL gamepad to borealis controller
+        size_t brlsButton          = SDL_BUTTONS_MAPPING[i];
+        state->buttons[brlsButton] = (bool)SDL_GameControllerGetButton(c, (SDL_GameControllerButton)i);
+    }
+
+    state->buttons[BUTTON_LT] = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 3276.7f;
+    state->buttons[BUTTON_RT] = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 3276.7f;
+
+    state->buttons[BUTTON_NAV_UP]    = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) < -16383.5f || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTY) < -16383.5f || state->buttons[BUTTON_UP];
+    state->buttons[BUTTON_NAV_RIGHT] = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) > 16383.5f || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTX) > 16383.5f || state->buttons[BUTTON_RIGHT];
+    state->buttons[BUTTON_NAV_DOWN]  = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) > 16383.5f || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTY) > 16383.5f || state->buttons[BUTTON_DOWN];
+    state->buttons[BUTTON_NAV_LEFT]  = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) < -16383.5f || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTX) < -16383.5f || state->buttons[BUTTON_LEFT];
+
+    for (size_t i = 0; i < SDL_GAMEPAD_AXIS_MAX; i++)
+    {
+        state->axes[SDL_AXIS_MAPPING[i]] = SDL_GameControllerGetAxis(c, (SDL_GameControllerAxis)i) / 32767.0;
+    }
+}
+
+// Re-enumerate and track controllers, picking up devices that appeared without
+// a hotplug event.
+static void syncControllers()
+{
+    std::vector<SDL_GameController*> removed;
+    {
+        std::lock_guard<std::mutex> lock(controllersMutex);
+        controllers.erase(std::remove_if(controllers.begin(), controllers.end(), [&removed](const auto& c) {
+            if (SDL_GameControllerFromInstanceID(c.first) != nullptr)
+                return false;
+            removed.push_back(c.second);
+            return true;
+        }), controllers.end());
+    }
+
+    // Close outside the lock: SDL takes its own lock inside.
+    for (SDL_GameController* controller : removed)
+        SDL_GameControllerClose(controller);
+
+    for (int i = 0, count = SDL_NumJoysticks(); i < count; i++)
+    {
+        SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(i);
+        if (jid < 0)
+            continue;
+
+        {
+            std::lock_guard<std::mutex> lock(controllersMutex);
+            if (std::find_if(controllers.begin(), controllers.end(), [jid](const auto& c) {
+                    return c.first == jid;
+                }) != controllers.end())
+                continue;
+        }
+
+        // Open outside the lock: SDL_GameControllerOpen may do driver I/O.
+        if (SDL_GameController* controller = SDL_GameControllerOpen(i))
+        {
+            Logger::info("Controller connected: {}/{}", jid, SDL_GameControllerName(controller));
+            std::lock_guard<std::mutex> lock(controllersMutex);
+            controllers.push_back({ jid, controller });
+        }
+    }
+}
+
 static int sdlEventWatcher(void* data, SDL_Event* event)
 {
     if (event->type == SDL_CONTROLLERDEVICEADDED)
     {
-        SDL_GameController* controller = SDL_GameControllerOpen(event->cdevice.which);
-        if (controller)
-        {
-            SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(event->cdevice.which);
-            Logger::info("Controller connected: {}/{}", jid, SDL_GameControllerName(controller));
-            controllers.push_back({ jid, controller });
-        }
+        syncControllers();
     }
-    else if (event->type == SDL_CONTROLLERDEVICEREMOVED)
+    else if (event->type == SDL_CONTROLLERDEVICEREMOVED || event->type == SDL_JOYDEVICEREMOVED)
     {
-        Logger::info("Controller disconnected: {}", event->cdevice.which);
-        SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(event->cdevice.which);
-        controllers.erase(std::remove_if(controllers.begin(), controllers.end(), [jid](auto x) {
-            return x.first == jid;
-        }), controllers.end());
+        // The joystick event still fires for devices SDL never mapped to a controller.
+        SDL_JoystickID jid = event->type == SDL_CONTROLLERDEVICEREMOVED ? event->cdevice.which : event->jdevice.which;
+        Logger::info("Controller disconnected: {}", jid);
+
+        std::lock_guard<std::mutex> lock(controllersMutex);
+        auto it = std::find_if(controllers.begin(), controllers.end(), [jid](const auto& c) {
+            return c.first == jid;
+        });
+        if (it != controllers.end()) {
+            SDL_GameControllerClose(it->second);
+            controllers.erase(it);
+        }
     }
     else if (event->type == SDL_MOUSEBUTTONDOWN)
     {
@@ -413,16 +482,10 @@ SDLInputManager::SDLInputManager(SDL_Window* window)
     }
 
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
-    int controllersCount = SDL_NumJoysticks();
-    brls::Logger::info("joystick num: {}", controllersCount);
-
-    for (int i = 0; i < controllersCount; i++)
-    {
-        SDL_JoystickID jid = SDL_JoystickGetDeviceInstanceID(i);
-        Logger::info("sdl: joystick {}: \"{}\"", jid, SDL_JoystickNameForIndex(i));
-        controllers.push_back({ jid, SDL_GameControllerOpen(i) });
-    }
+    brls::Logger::info("joystick num: {}", SDL_NumJoysticks());
+    syncControllers();
 
     SDL_AddEventWatch(sdlEventWatcher, this->window);
 
@@ -439,6 +502,7 @@ SDLInputManager::SDLInputManager(SDL_Window* window)
 
 SDLInputManager::~SDLInputManager()
 {
+    std::lock_guard<std::mutex> lock(controllersMutex);
     for (auto i : controllers)
     {
         SDL_GameControllerClose(i.second);
@@ -447,21 +511,26 @@ SDLInputManager::~SDLInputManager()
 
 short SDLInputManager::getControllersConnectedCount()
 {
-    return controllers.size();
+    std::lock_guard<std::mutex> lock(controllersMutex);
+    return (short)controllers.size();
 }
 
 void SDLInputManager::updateUnifiedControllerState(ControllerState* state)
 {
+    SDL_GameControllerUpdate();
+    syncControllers();
+
     for (bool& button : state->buttons)
         button = false;
 
     for (float& axe : state->axes)
         axe = 0;
 
+    std::lock_guard<std::mutex> lock(controllersMutex);
     for (auto& c : controllers)
     {
         ControllerState localState {};
-        updateControllerState(&localState, c.first);
+        fillControllerState(&localState, c.second);
 
         for (size_t i = 0; i < _BUTTON_MAX; i++)
             state->buttons[i] |= localState.buttons[i];
@@ -509,29 +578,10 @@ void SDLInputManager::updateUnifiedControllerState(ControllerState* state)
 
 void SDLInputManager::updateControllerState(ControllerState* state, int controller)
 {
-    if (controllers.size() <= controller) return;
+    std::lock_guard<std::mutex> lock(controllersMutex);
+    if (controller < 0 || (size_t)controller >= controllers.size()) return;
 
-    SDL_GameController* c = controllers[controller].second;
-
-    for (size_t i = 0; i < SDL_GAMEPAD_BUTTON_MAX; i++)
-    {
-        // Translate SDL gamepad to borealis controller
-        size_t brlsButton          = SDL_BUTTONS_MAPPING[i];
-        state->buttons[brlsButton] = (bool)SDL_GameControllerGetButton(c, (SDL_GameControllerButton)i);
-    }
-
-    state->buttons[BUTTON_LT] = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 3276.7f;
-    state->buttons[BUTTON_RT] = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 3276.7f;
-
-    state->buttons[BUTTON_NAV_UP]    = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) < -16383.5f || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTY) < -16383.5f || state->buttons[BUTTON_UP];
-    state->buttons[BUTTON_NAV_RIGHT] = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) > 16383.5f || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTX) > 16383.5f || state->buttons[BUTTON_RIGHT];
-    state->buttons[BUTTON_NAV_DOWN]  = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY) > 16383.5f || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTY) > 16383.5f || state->buttons[BUTTON_DOWN];
-    state->buttons[BUTTON_NAV_LEFT]  = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX) < -16383.5f || SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTX) < -16383.5f || state->buttons[BUTTON_LEFT];
-
-    for (size_t i = 0; i < SDL_GAMEPAD_AXIS_MAX; i++)
-    {
-        state->axes[SDL_AXIS_MAPPING[i]] = SDL_GameControllerGetAxis(c, (SDL_GameControllerAxis)i) / 32767.0;
-    }
+    fillControllerState(state, controllers[controller].second);
 }
 
 bool SDLInputManager::getKeyboardKeyState(BrlsKeyboardScancode key)
@@ -602,7 +652,8 @@ void SDLInputManager::runloopStart()
 
 void SDLInputManager::sendRumble(unsigned short controller, unsigned short lowFreqMotor, unsigned short highFreqMotor)
 {
-    if (controllers.size() <= controller) return;
+    std::lock_guard<std::mutex> lock(controllersMutex);
+    if (controller >= controllers.size()) return;
     SDL_GameController* c = controllers[controller].second;
 
     SDL_GameControllerRumble(c, lowFreqMotor, highFreqMotor, 30000);
