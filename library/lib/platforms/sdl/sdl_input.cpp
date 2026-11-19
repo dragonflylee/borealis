@@ -587,9 +587,14 @@ void SDLInputManager::updateMouseStates(RawMouseState* state)
     state->position.y  = y * scaleFactor / Application::windowScale;
 #endif
 
+#ifdef __PS4__
+    cursorPosition = state->position;
+#endif
+
     state->offset = pointerOffset;
 
     state->scroll = scrollOffset;
+    scrollOffset = Point();
 }
 
 void SDLInputManager::setPointerLock(bool lock)
@@ -597,6 +602,37 @@ void SDLInputManager::setPointerLock(bool lock)
     pointerLocked = lock;
     SDL_ShowCursor(lock ? SDL_FALSE : SDL_TRUE);
 }
+
+#ifdef __PS4__
+void SDLInputManager::drawCursor(NVGcontext* vg)
+{
+    if (pointerLocked)
+        return;
+
+    // The PS4 SDL backend has no native cursor. Draw in the same logical
+    // coordinates used for hit testing, above views and outside their clips.
+    nvgSave(vg);
+    nvgResetScissor(vg);
+    nvgGlobalAlpha(vg, 1.0f);
+    nvgTranslate(vg, cursorPosition.x, cursorPosition.y);
+    nvgBeginPath(vg);
+    nvgMoveTo(vg, 0, 0);
+    nvgLineTo(vg, 0, 26);
+    nvgLineTo(vg, 7, 20);
+    nvgLineTo(vg, 12, 31);
+    nvgLineTo(vg, 17, 29);
+    nvgLineTo(vg, 12, 18);
+    nvgLineTo(vg, 22, 18);
+    nvgClosePath(vg);
+    nvgFillColor(vg, nvgRGBA(255, 255, 255, 255));
+    nvgFill(vg);
+    nvgStrokeColor(vg, nvgRGBA(0, 0, 0, 255));
+    nvgStrokeWidth(vg, 1.75f);
+    nvgLineJoin(vg, NVG_ROUND);
+    nvgStroke(vg);
+    nvgRestore(vg);
+}
+#endif
 
 void SDLInputManager::runloopStart()
 {
@@ -622,6 +658,11 @@ void SDLInputManager::updateMouseMotion(SDL_MouseMotionEvent event)
         int width, height;
         SDL_GetWindowSize(window, &width, &height);
         SDL_WarpMouseInWindow(window, width / 2, height / 2);
+    }
+    else
+    {
+        pointerOffsetBuffer.x += event.xrel;
+        pointerOffsetBuffer.y += event.yrel;
     }
 }
 

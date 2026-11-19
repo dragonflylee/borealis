@@ -33,6 +33,10 @@ class SDLInputManager : public InputManager
 
     void setPointerLock(bool lock) override;
 
+#ifdef __PS4__
+    void drawCursor(NVGcontext* vg) override;
+#endif
+
     void updateMouseMotion(SDL_MouseMotionEvent event);
 
     void updateMouseWheel(SDL_MouseWheelEvent event);
@@ -46,6 +50,10 @@ class SDLInputManager : public InputManager
     Point pointerOffset;
     Point pointerOffsetBuffer;
     bool pointerLocked = false;
+
+#ifdef __PS4__
+    Point cursorPosition;
+#endif
 
     SDL_Window* window;
 };
