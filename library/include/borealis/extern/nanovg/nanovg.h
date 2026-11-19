@@ -568,6 +568,9 @@ int nvgCreateFontMemAtIndex(NVGcontext* ctx, const char* name, unsigned char* da
 // Finds a loaded font of specified name, and returns handle to it, or -1 if the font is not found.
 int nvgFindFont(NVGcontext* ctx, const char* name);
 
+// Returns the raw data of font 'fontId' (read-only, owned by the stash, NULL on failure).
+const unsigned char* nvgGetFontData(NVGcontext* ctx, int fontId, int* dataSize);
+
 // Adds a fallback font by handle.
 int nvgAddFallbackFontId(NVGcontext* ctx, int baseFont, int fallbackFont);
 
