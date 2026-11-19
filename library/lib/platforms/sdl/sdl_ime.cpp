@@ -242,6 +242,54 @@ namespace brls
         dialog->open();
     }
 
+    bool SDLImeManager::supportsInlineEditing()
+    {
+        return true;
+    }
+
+    void SDLImeManager::startInlineEditing(std::function<void(const std::string&)> onText,
+        std::function<void(const std::string&)> onCompose, bool disableIme)
+    {
+        this->inlineOnText    = std::move(onText);
+        this->inlineOnCompose = std::move(onCompose);
+        this->inlineActive    = true;
+        this->inlineDisableIme = disableIme;
+        this->inlineSubscription = event->subscribe([this](SDL_Event* e) {
+            if (!this->inlineActive) return;
+            if (e->type == SDL_TEXTINPUT)
+            {
+                if (this->inlineOnText) this->inlineOnText(e->text.text);
+            }
+            else if (e->type == SDL_TEXTEDITING && !this->inlineDisableIme)
+            {
+                // IME composition preview (e.g. pinyin); not committed yet.
+                if (this->inlineOnCompose) this->inlineOnCompose(e->edit.text);
+            }
+        });
+        // SDL_StopTextInput() would also kill SDL_TEXTINPUT, so passwords keep text input
+        // running and merely drop composition above.
+        SDL_StartTextInput();
+    }
+
+    void SDLImeManager::setInlineEditingRect(float x, float y, float width, float height)
+    {
+        if (!this->inlineActive) return;
+        // Mirror EditTextDialog: keep the candidate window on the edited text.
+        const SDL_Rect rect = { (int)x, (int)y, width > 1 ? (int)width : 1, height > 1 ? (int)height : 1 };
+        SDL_SetTextInputRect(&rect);
+    }
+
+    void SDLImeManager::stopInlineEditing()
+    {
+        if (!this->inlineActive) return;
+        this->inlineActive = false;
+        this->inlineOnText = nullptr;
+        this->inlineOnCompose = nullptr;
+        event->unsubscribe(this->inlineSubscription);
+        this->inlineSubscription = {};
+        SDL_StopTextInput();
+    }
+
     bool SDLImeManager::openForText(std::function<void(std::string)> f, std::string headerText,
         std::string subText, int maxStringLength, std::string initialText,
         int kbdDisableBitmask)
