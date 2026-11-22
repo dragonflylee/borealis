@@ -1277,15 +1277,13 @@ int Application::getFont(std::string fontName)
     return Application::fontStash[fontName];
 }
 
+#ifndef __SWITCH__
 int Application::getDefaultFont()
 {
-#ifdef __SWITCH__
-    static int regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);
-#else
     static int regular = Application::getFont(FONT_REGULAR);
-#endif
     return regular;
 }
+#endif
 
 bool Application::XMLViewsRegisterContains(std::string name)
 {
