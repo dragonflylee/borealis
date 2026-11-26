@@ -79,6 +79,7 @@ const std::string bottomBarXML = R"xml(
                     width="auto"
                     height="auto"
                     verticalAlign="center"
+                    textColor="@theme/brls/bottom_bar/text"
                     fontSize="21.5" />
 
             </brls:Box>

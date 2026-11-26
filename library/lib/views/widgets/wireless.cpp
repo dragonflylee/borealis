@@ -73,22 +73,12 @@ WirelessWidget::WirelessWidget()
 
 void WirelessWidget::applyTheme(ThemeVariant theme)
 {
-    switch (theme)
+    // White images tinted with the theme color (black/white by default)
+    NVGcolor color = Application::getTheme()["brls/bottom_bar/icon"];
+    for (auto [image, name] : { std::pair { _0, "wifi_0" }, { _1, "wifi_1" }, { _2, "wifi_2" }, { _3, "wifi_3" }, { ethernet, "ethernet" } })
     {
-        case ThemeVariant::LIGHT:
-            _0->setImageFromRes("img/sys/wifi_0_light.png");
-            _1->setImageFromRes("img/sys/wifi_1_light.png");
-            _2->setImageFromRes("img/sys/wifi_2_light.png");
-            _3->setImageFromRes("img/sys/wifi_3_light.png");
-            ethernet->setImageFromRes("img/sys/ethernet_light.png");
-            break;
-        case ThemeVariant::DARK:
-            _0->setImageFromRes("img/sys/wifi_0_dark.png");
-            _1->setImageFromRes("img/sys/wifi_1_dark.png");
-            _2->setImageFromRes("img/sys/wifi_2_dark.png");
-            _3->setImageFromRes("img/sys/wifi_3_dark.png");
-            ethernet->setImageFromRes("img/sys/ethernet_dark.png");
-            break;
+        image->setImageFromRes(std::string("img/sys/") + name + "_dark.png");
+        image->setTintColor(color);
     }
 }
 

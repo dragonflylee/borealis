@@ -182,6 +182,8 @@ void Image::draw(NVGcontext* vg, float x, float y, float width, float height, St
 
     this->paint.xform[4] = coordX;
     this->paint.xform[5] = coordY;
+    this->paint.innerColor = this->tintColor;
+    this->paint.outerColor = this->tintColor;
 
     nvgBeginPath(vg);
     if (getClipsToBounds())
@@ -194,6 +196,11 @@ void Image::draw(NVGcontext* vg, float x, float y, float width, float height, St
     }
     nvgFillPaint(vg, a(this->paint));
     nvgFill(vg);
+}
+
+void Image::setTintColor(NVGcolor color)
+{
+    this->tintColor = color;
 }
 
 void Image::onLayout()

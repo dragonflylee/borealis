@@ -41,12 +41,14 @@ const std::string hintXML = R"xml(
                 id="icon"
                 width="auto"
                 height="auto"
+                textColor="@theme/brls/bottom_bar/text"
                 fontSize="25.5"/>
 
             <brls:Label
                 id="hint"
                 width="auto"
                 height="auto"
+                textColor="@theme/brls/bottom_bar/text"
                 fontSize="21.5"
                 marginLeft="8"/>
 
