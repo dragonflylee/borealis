@@ -40,7 +40,7 @@ const std::string bottomBarXML = R"xml(
         marginRight="@style/brls/hints/footer_margin_sides"
         paddingLeft="@style/brls/hints/footer_padding_sides"
         paddingRight="@style/brls/hints/footer_padding_sides"
-        lineColor="@theme/brls/applet_frame/separator"
+        lineColor="@theme/brls/bottom_bar/text"
         lineTop="1px"
         alignItems="stretch">
         <brls:Box
