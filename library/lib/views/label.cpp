@@ -83,14 +83,13 @@ static YGSize labelMeasureFunc(YGNodeRef node, float width, YGMeasureMode widthM
     };
 
     if (fullText.empty()) {
-        if (widthMode == YGMeasureModeExactly)
-        {
+        // An empty label takes no space, except along an axis whose size is
+        // imposed. Keeping the offered size for an AtMost/Undefined axis lets
+        // the label grow to fill all available space.
+        if (widthMode != YGMeasureModeExactly)
             size.width = 0;
-        }
-        else if (heightMode == YGMeasureModeExactly)
-        {
+        if (heightMode != YGMeasureModeExactly)
             size.height = 0;
-        }
         return size;
     }
 
