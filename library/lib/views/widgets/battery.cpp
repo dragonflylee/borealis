@@ -31,21 +31,12 @@ BatteryWidget::BatteryWidget()
 
     setSize(Size(44, 44));
 
-    back = new Image();
-    back->setSize(Size(44, 44));
-    back->setScalingType(ImageScalingType::FIT);
-    back->detach();
-
     level = new Rectangle();
     level->setDetachedPosition(11, 18);
     level->setSize(Size(BATTERY_MAX_WIDTH, 10));
     level->detach();
 
-    applyBackTheme(platform->getThemeVariant());
-    applyLevelTheme(platform->getThemeVariant());
-
     addView(level);
-    addView(back);
 }
 
 void BatteryWidget::updateState()
@@ -70,42 +61,22 @@ void BatteryWidget::updateState()
     }
 }
 
-void BatteryWidget::applyBackTheme(ThemeVariant theme)
-{
-    switch (theme)
-    {
-        case ThemeVariant::LIGHT:
-            back->setImageFromRes("img/sys/battery_back_light.png");
-            break;
-        case ThemeVariant::DARK:
-            back->setImageFromRes("img/sys/battery_back_dark.png");
-            break;
-    }
-}
-
-void BatteryWidget::applyLevelTheme(ThemeVariant theme)
-{
-    switch (theme)
-    {
-        case ThemeVariant::LIGHT:
-            level->setColor(RGB(0, 0, 0));
-            break;
-        case ThemeVariant::DARK:
-            level->setColor(RGB(255, 255, 255));
-            break;
-    }
-}
-
 void BatteryWidget::draw(NVGcontext* vg, float x, float y, float width, float height, Style style, FrameContext* ctx)
 {
     this->updateState();
-    if (isBatteryCharging)
-        level->setColor(RGB(140, 251, 79));
-    else
-        applyLevelTheme(platform->getThemeVariant());
-
+    NVGcolor color = Application::getTheme()["brls/bottom_bar/icon"];
+    level->setColor(isBatteryCharging ? RGB(140, 251, 79) : a(color));
     level->setWidth(BATTERY_MAX_WIDTH * batteryLevel);
     Box::draw(vg, x, y, width, height, style, ctx);
+
+    // Outline (body and terminal), so it takes the theme color
+    nvgBeginPath(vg);
+    nvgRect(vg, x + 7, y + 13, 33, 19);
+    nvgRect(vg, x + 10, y + 16, 27, 14);
+    nvgPathWinding(vg, NVG_HOLE);
+    nvgRect(vg, x + 40, y + 20, 3, 6);
+    nvgFillColor(vg, a(color));
+    nvgFill(vg);
 }
 
 View* BatteryWidget::create()

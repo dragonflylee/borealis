@@ -133,6 +133,12 @@ class Image : public View
      * Whether to destroy the current texture before updating the image texture
      */
     void setFreeTexture(bool value);
+
+    /**
+     * Multiplies the image's pixels by the given color, so a white image is
+     * drawn in that color.
+     */
+    void setTintColor(NVGcolor color);
     bool getFreeTexture();
 
     int getTexture();
@@ -149,6 +155,7 @@ class Image : public View
     int texture = 0;
 
     NVGpaint paint;
+    NVGcolor tintColor = nvgRGBA(255, 255, 255, 255);
 
     void invalidateImageBounds();
     int getImageFlags();

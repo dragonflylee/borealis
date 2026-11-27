@@ -33,12 +33,9 @@ class BatteryWidget : public Box
     static View* create();
 
   private:
-    Image* back;
     Rectangle* level;
     Platform* platform;
 
-    void applyBackTheme(ThemeVariant theme);
-    void applyLevelTheme(ThemeVariant theme);
 
     void updateState();
     inline static bool isBatteryCharging = false;
